@@ -69,8 +69,39 @@ export async function withClient<T>(
   }
 }
 
+/** Human-friendly explanations for common Postgres SQLSTATE codes. */
+const SQLSTATE_MESSAGES: Record<string, string> = {
+  "42601": "Syntax error in your SQL. Double-check keywords, commas, and parentheses.",
+  "42P01": "That table doesn't exist. Check the name (and schema) against the sidebar.",
+  "42703": "That column doesn't exist. Check the spelling against the table's columns.",
+  "42883": "That function or operator doesn't exist, or the argument types don't match.",
+  "42P18": "The type of a parameter couldn't be determined. Try adding an explicit cast.",
+  "22P02": "Invalid input value for its column type (for example, text where a number is expected).",
+  "22003": "A numeric value is out of range for its column type.",
+  "22012": "Division by zero.",
+  "23505": "That value already exists in a unique column.",
+  "23503": "This references a row that doesn't exist (foreign key violation).",
+  "42501": "Permission denied. The database user can't read one of these tables.",
+  "28P01": "Password authentication failed. Check your credentials.",
+  "28000": "The database rejected this user. Check the username and permissions.",
+  "3D000": "That database name doesn't exist on the server.",
+  "53300": "Too many connections to the database right now. Try again shortly.",
+  "57014": "The query took too long and was cancelled (30s limit).",
+}
+
+interface PgLikeError {
+  message?: string
+  code?: string
+  hint?: string
+  detail?: string
+  position?: string
+}
+
 export function friendlyDbError(err: unknown): string {
+  const e = (err ?? {}) as PgLikeError
   const message = err instanceof Error ? err.message : String(err)
+
+  // Network / connection level problems come through as plain Error messages.
   if (message.includes("ENOTFOUND") || message.includes("EAI_AGAIN")) {
     return "Could not resolve the database host. Check the connection string."
   }
@@ -81,10 +112,22 @@ export function friendlyDbError(err: unknown): string {
     return "Password authentication failed. Check your credentials."
   }
   if (message.includes("timeout") || message.includes("ETIMEDOUT")) {
-    return "The database connection timed out."
+    return "The database connection timed out. Check the host and that it's reachable."
   }
   if (message.includes("no pg_hba.conf") || message.includes("SSL")) {
     return "SSL negotiation failed. Try adding ?sslmode=require to your connection string."
   }
-  return message
+
+  // Postgres query errors carry a SQLSTATE code and often a helpful hint/detail.
+  const parts: string[] = []
+  if (e.code && SQLSTATE_MESSAGES[e.code]) {
+    parts.push(SQLSTATE_MESSAGES[e.code])
+    if (message) parts.push(message.replace(/^error:\s*/i, ""))
+  } else {
+    parts.push(message.replace(/^error:\s*/i, ""))
+  }
+  if (e.hint) parts.push(`Hint: ${e.hint}`)
+  else if (e.detail) parts.push(e.detail)
+
+  return parts.filter(Boolean).join(" — ")
 }

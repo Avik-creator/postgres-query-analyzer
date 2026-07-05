@@ -1,7 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { GitBranch, ListTree, Sparkles, Gauge, ServerCog, Terminal, ArrowDownWideNarrow } from "lucide-react"
+import {
+  GitBranch,
+  ListTree,
+  Sparkles,
+  Gauge,
+  ServerCog,
+  Terminal,
+  ArrowDownWideNarrow,
+  AlertTriangle,
+  X,
+} from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { cn } from "@/lib/utils"
@@ -46,6 +56,7 @@ export function QueryAnalyzer() {
   // analysis
   const [analyzing, setAnalyzing] = useState(false)
   const [result, setResult] = useState<AnalyzeResponse | null>(null)
+  const [analysisError, setAnalysisError] = useState<string | null>(null)
 
   // ai
   const [aiRunning, setAiRunning] = useState(false)
@@ -111,6 +122,7 @@ export function QueryAnalyzer() {
   function handleSourceChange(next: ConnectionSource) {
     setSource(next)
     setResult(null)
+    setAnalysisError(null)
     setAi(null)
     setBenchResults([])
     if (next === "demo") {
@@ -131,8 +143,12 @@ export function QueryAnalyzer() {
   }
 
   async function handleAnalyze() {
-    if (!sql.trim()) return
+    if (!sql.trim()) {
+      setAnalysisError("Write a SQL query before running an analysis.")
+      return
+    }
     setAnalyzing(true)
+    setAnalysisError(null)
     setAi(null)
     setBenchResults([])
     try {
@@ -142,14 +158,15 @@ export function QueryAnalyzer() {
         body: JSON.stringify({ ...connBody(), sql }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok) throw new Error(data.error || "Analysis failed.")
       setResult(data)
       setTab("plan")
       if (!data.executed) {
         toast.info("Non-SELECT statement: showing estimated plan without executing.")
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Analysis failed")
+      setResult(null)
+      setAnalysisError(err instanceof Error ? err.message : "Analysis failed for an unknown reason.")
     } finally {
       setAnalyzing(false)
     }
@@ -206,7 +223,7 @@ export function QueryAnalyzer() {
         (result.explain.Plan["Actual Total Time"] ?? 0) * (result.explain.Plan["Actual Loops"] ?? 1))
     : 0
 
-  const hasResults = !!result || aiRunning || !!ai
+  const hasResults = !!result || aiRunning || !!ai || !!analysisError
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-background">
@@ -267,6 +284,24 @@ export function QueryAnalyzer() {
                   Write a query above and hit <span className="font-medium text-foreground">Analyze</span> to see the
                   execution plan, heuristic findings, index suggestions, and AI recommendations.
                 </p>
+              </div>
+            ) : analysisError ? (
+              <div className="flex items-start gap-3 rounded-lg border border-destructive/40 bg-destructive/10 p-4">
+                <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md bg-destructive/15 text-destructive">
+                  <AlertTriangle className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Couldn&apos;t analyze this query</p>
+                  <p className="mt-1 break-words text-sm leading-relaxed text-muted-foreground">{analysisError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setAnalysisError(null)}
+                  aria-label="Dismiss error"
+                  className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-foreground"
+                >
+                  <X className="size-4" />
+                </button>
               </div>
             ) : (
               <div className="flex flex-col gap-4">
