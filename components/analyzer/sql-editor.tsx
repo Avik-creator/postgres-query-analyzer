@@ -1,5 +1,6 @@
 "use client"
 
+import { useRef } from "react"
 import { Play, Sparkles, Loader2, FileCode2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
@@ -22,24 +23,25 @@ interface SqlEditorProps {
 
 export function SqlEditor({ sql, onChange, onAnalyze, onAi, analyzing, aiRunning }: SqlEditorProps) {
   const busy = analyzing || aiRunning
-  const lineCount = Math.max(sql.split("\n").length, 11)
+  const gutterRef = useRef<HTMLDivElement>(null)
+  const lineCount = Math.max(sql.split("\n").length, 10)
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card">
+    <div className="flex flex-col overflow-hidden rounded-lg border border-border bg-card">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2 text-muted-foreground">
           <FileCode2 className="size-4" />
           <span className="font-mono text-xs font-medium tracking-tight text-foreground">query.sql</span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select
             onValueChange={(value) => {
               const q = SAMPLE_QUERIES.find((s) => s.label === value)
               if (q) onChange(q.sql)
             }}
           >
-            <SelectTrigger size="sm" className="h-8 w-[190px] text-xs">
+            <SelectTrigger size="sm" className="h-8 w-[170px] text-xs max-sm:w-full">
               <SelectValue placeholder="Load a sample query" />
             </SelectTrigger>
             <SelectContent>
@@ -68,19 +70,27 @@ export function SqlEditor({ sql, onChange, onAnalyze, onAi, analyzing, aiRunning
       </div>
 
       {/* Editor body */}
-      <div className="relative flex min-h-0 flex-1">
+      <div className="flex overflow-hidden">
         <div
+          ref={gutterRef}
           aria-hidden
-          className="select-none border-r border-border bg-muted/40 px-3 py-4 text-right font-mono text-xs leading-6 text-muted-foreground/60"
+          className="h-[272px] shrink-0 select-none overflow-hidden border-r border-border bg-muted/40 px-3 py-4 text-right font-mono text-sm leading-6 text-muted-foreground/60"
         >
           {Array.from({ length: lineCount }, (_, i) => (
             <div key={i}>{i + 1}</div>
           ))}
+          {/* Spacer so the gutter can scroll in step with the textarea's overscroll */}
+          <div className="h-8" />
         </div>
         <textarea
           value={sql}
           onChange={(e) => onChange(e.target.value)}
+          onScroll={(e) => {
+            if (gutterRef.current) gutterRef.current.scrollTop = e.currentTarget.scrollTop
+          }}
           spellCheck={false}
+          wrap="off"
+          aria-label="SQL query editor"
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && !e.nativeEvent.isComposing) {
               e.preventDefault()
@@ -88,7 +98,7 @@ export function SqlEditor({ sql, onChange, onAnalyze, onAi, analyzing, aiRunning
             }
           }}
           placeholder="SELECT * FROM demo.orders WHERE status = 'paid';"
-          className="min-h-[248px] flex-1 resize-none bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50"
+          className="h-[272px] w-full resize-none overflow-auto whitespace-pre bg-transparent px-4 py-4 font-mono text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground/50"
         />
       </div>
 

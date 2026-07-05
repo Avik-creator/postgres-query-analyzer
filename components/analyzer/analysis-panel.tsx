@@ -75,27 +75,21 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
 
   return (
     <div className="space-y-6">
-      {/* Summary metrics */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Metric
-          label="Planning"
-          value={summary.planningTime !== undefined ? `${summary.planningTime.toFixed(2)}ms` : "—"}
-          hint={METRIC_GLOSSARY.planningTime.short}
-        />
-        <Metric
-          label="Execution"
-          value={summary.executionTime !== undefined ? `${summary.executionTime.toFixed(2)}ms` : "—"}
-          highlight
-          hint={METRIC_GLOSSARY.executionTime.short}
-        />
-        <Metric label="Total cost" value={summary.totalCost.toFixed(0)} hint={METRIC_GLOSSARY.cost.short} />
-        <Metric
-          label="Row mis-estimate"
-          value={summary.maxRowMisestimate ? `${Math.round(summary.maxRowMisestimate)}x` : "OK"}
-          warn={!!summary.maxRowMisestimate && summary.maxRowMisestimate > 10}
-          hint={METRIC_GLOSSARY.rowMisestimate.short}
-        />
-      </div>
+      {/* Row estimate warning (timings/cost already shown in the metrics strip above) */}
+      {!!summary.maxRowMisestimate && summary.maxRowMisestimate > 10 && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+          <p className="text-sm leading-relaxed text-foreground">
+            Postgres misjudged row counts by up to{" "}
+            <span className="font-mono font-semibold text-warning">{Math.round(summary.maxRowMisestimate)}x</span>{" "}
+            in this plan.{" "}
+            <span className="text-muted-foreground">
+              {METRIC_GLOSSARY.rowMisestimate.short} Running <span className="font-mono">ANALYZE</span> on the
+              table often fixes this.
+            </span>
+          </p>
+        </div>
+      )}
 
       {/* Concepts demonstrated */}
       {summary.concepts.length > 0 && (
@@ -177,34 +171,4 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
   )
 }
 
-function Metric({
-  label,
-  value,
-  highlight,
-  warn,
-  hint,
-}: {
-  label: string
-  value: string
-  highlight?: boolean
-  warn?: boolean
-  hint?: string
-}) {
-  return (
-    <div className="rounded-lg border border-border bg-card/50 p-3">
-      <div className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
-        <span>{label}</span>
-        {hint && <InfoHint side="top">{hint}</InfoHint>}
-      </div>
-      <div
-        className={cn(
-          "mt-1 font-mono text-lg font-semibold",
-          highlight && "text-primary",
-          warn && "text-warning",
-        )}
-      >
-        {value}
-      </div>
-    </div>
-  )
-}
+

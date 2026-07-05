@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   GitBranch,
   ListTree,
@@ -11,6 +11,7 @@ import {
   ArrowDownWideNarrow,
   AlertTriangle,
   X,
+  Loader2,
 } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -23,6 +24,8 @@ import { AnalysisPanel } from "./analysis-panel"
 import { AiPanel } from "./ai-panel"
 import { McpDialog } from "./mcp-dialog"
 import { LearnDialog } from "./learn-dialog"
+import { InfoHint } from "./info-hint"
+import { METRIC_GLOSSARY } from "@/lib/glossary"
 import type { AnalyzeResponse, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
 import { SAMPLE_QUERIES } from "@/lib/sample-queries"
 
@@ -62,6 +65,13 @@ export function QueryAnalyzer() {
   const [ai, setAi] = useState<AiSuggestion | null>(null)
 
   const [tab, setTab] = useState("plan")
+  const resultsRef = useRef<HTMLDivElement>(null)
+
+  const scrollToResults = useCallback(() => {
+    requestAnimationFrame(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+    })
+  }, [])
 
   const connBody = useCallback(
     () => ({ source, connectionString: source === "custom" ? connectionString : undefined }),
@@ -144,6 +154,7 @@ export function QueryAnalyzer() {
     setAnalyzing(true)
     setAnalysisError(null)
     setAi(null)
+    scrollToResults()
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -169,6 +180,7 @@ export function QueryAnalyzer() {
     if (!sql.trim()) return
     setAiRunning(true)
     setTab("ai")
+    scrollToResults()
     try {
       const res = await fetch("/api/ai", {
         method: "POST",
@@ -245,7 +257,19 @@ export function QueryAnalyzer() {
             />
 
             {/* Results */}
-            {!hasResults ? (
+            <div ref={resultsRef} className="scroll-mt-4">
+            {analyzing ? (
+              <div className="flex min-h-[280px] flex-col items-center justify-center rounded-lg border border-border bg-card/40 p-8 text-center">
+                <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-muted/40 text-primary">
+                  <Loader2 className="size-6 animate-spin" />
+                </div>
+                <p className="mt-4 text-sm font-medium text-foreground">Analyzing your query…</p>
+                <p className="mt-1 max-w-sm text-pretty text-sm text-muted-foreground">
+                  Running <span className="font-mono text-foreground">EXPLAIN (ANALYZE)</span> in a read-only
+                  transaction and inspecting the plan.
+                </p>
+              </div>
+            ) : !hasResults ? (
               <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/40 p-8 text-center">
                 <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-muted/40 text-muted-foreground">
                   <Terminal className="size-6" />
@@ -284,13 +308,23 @@ export function QueryAnalyzer() {
                       value={fmtMs(totalTime || undefined)}
                       accent
                       icon={<Gauge className="size-3.5" />}
+                      hint={METRIC_GLOSSARY.executionTime.short}
                     />
-                    <Stat label="Planning" value={fmtMs(result.explain["Planning Time"])} />
-                    <Stat label="Rows returned" value={fmtRows(result.explain.Plan["Actual Rows"])} />
+                    <Stat
+                      label="Planning"
+                      value={fmtMs(result.explain["Planning Time"])}
+                      hint={METRIC_GLOSSARY.planningTime.short}
+                    />
+                    <Stat
+                      label="Rows returned"
+                      value={fmtRows(result.explain.Plan["Actual Rows"])}
+                      hint="How many rows the query actually produced."
+                    />
                     <Stat
                       label="Total cost"
                       value={result.explain.Plan["Total Cost"]?.toFixed(0) ?? "—"}
                       icon={<ArrowDownWideNarrow className="size-3.5" />}
+                      hint={METRIC_GLOSSARY.cost.short}
                     />
                   </div>
                 )}
@@ -345,6 +379,7 @@ export function QueryAnalyzer() {
                 </div>
               </div>
             )}
+            </div>
           </div>
         </main>
       </div>
@@ -357,17 +392,20 @@ function Stat({
   value,
   accent,
   icon,
+  hint,
 }: {
   label: string
   value: string
   accent?: boolean
   icon?: React.ReactNode
+  hint?: string
 }) {
   return (
     <div className="rounded-lg border border-border bg-card px-4 py-3">
       <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
         {icon}
         {label}
+        {hint && <InfoHint side="top">{hint}</InfoHint>}
       </div>
       <div className={cn("mt-1.5 font-mono text-xl font-semibold tabular-nums", accent && "text-primary")}>
         {value}
