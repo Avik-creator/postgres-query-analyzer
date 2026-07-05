@@ -1,6 +1,14 @@
 import { withClient, resolveConnection, friendlyDbError, type ConnectionSource } from "./db"
 import { checkStatement, buildExplain } from "./sql-safety"
-import { analyzePlan, type AnalysisResult, type ExplainResult, type IndexSuggestion } from "./analyze"
+import {
+  analyzePlan,
+  type AnalysisResult,
+  type AnalyzeContext,
+  type ExistingIndex,
+  type ExplainResult,
+  type IndexSuggestion,
+  type PlanNode,
+} from "./analyze"
 
 /** Minimal structural type for whatever pg client `withClient` hands us. */
 type QueryClient = { query: (text: string, values?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }> }
@@ -53,7 +61,11 @@ export async function runAnalyze(sql: string, conn: ConnectionInput): Promise<An
         throw new Error("Could not read the query plan from the database.")
       }
 
-      const analysis = analyzePlan(parsed)
+      // Gather live facts (table sizes + existing indexes) for the relations the
+      // plan actually touches, so the advisor can estimate selectivity for write
+      // statements and skip indexes that already exist.
+      const context = await gatherContext(client, parsed.Plan, analyze)
+      const analysis = analyzePlan(parsed, context)
 
       // Validate index suggestions against the planner's own cost model using
       // hypothetical (HypoPG) indexes, when the extension is available.
@@ -73,6 +85,116 @@ export async function runAnalyze(sql: string, conn: ConnectionInput): Promise<An
   } catch (err) {
     throw new Error(friendlyDbError(err))
   }
+}
+
+/** Collect every (schema, relation) pair referenced by scans in the plan. */
+function collectPlanRelations(root: PlanNode): { schema?: string; relation: string }[] {
+  const seen = new Set<string>()
+  const out: { schema?: string; relation: string }[] = []
+  const walk = (n: PlanNode) => {
+    const rel = n["Relation Name"]
+    if (rel) {
+      const key = `${n.Schema ?? ""}.${rel}`
+      if (!seen.has(key)) {
+        seen.add(key)
+        out.push({ schema: n.Schema, relation: rel })
+      }
+    }
+    for (const c of n.Plans ?? []) walk(c)
+  }
+  walk(root)
+  return out
+}
+
+/**
+ * Parse the indexed column names from a pg_indexes `indexdef`, e.g.
+ * `CREATE INDEX x ON t USING btree (status, created_at DESC)` -> ["status","created_at"].
+ * Expression indexes (containing nested parens) are skipped.
+ */
+export function parseIndexColumns(indexdef: string): string[] {
+  const open = indexdef.indexOf("(")
+  if (open === -1) return []
+  // Take the balanced parenthesised column list following USING ... .
+  let depth = 0
+  let end = -1
+  for (let i = open; i < indexdef.length; i++) {
+    if (indexdef[i] === "(") depth++
+    else if (indexdef[i] === ")") {
+      depth--
+      if (depth === 0) {
+        end = i
+        break
+      }
+    }
+  }
+  if (end === -1) return []
+  const inner = indexdef.slice(open + 1, end)
+  if (inner.includes("(")) return [] // expression index — not a plain column list
+  return inner
+    .split(",")
+    .map((part) =>
+      part
+        .trim()
+        .replace(/\b(ASC|DESC|NULLS\s+(FIRST|LAST))\b/gi, "")
+        .replace(/\s+\S+_ops\b/gi, "") // opclass, e.g. text_pattern_ops
+        .trim()
+        .replace(/^"|"$/g, ""),
+    )
+    .filter((c) => /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(c))
+}
+
+/**
+ * Fetch table row estimates and existing indexes for the relations in the plan.
+ * Best-effort: any failure returns a partial/empty context so analysis still
+ * runs. Row estimates are only needed when the statement wasn't executed
+ * (write statements) but are cheap enough to always fetch.
+ */
+async function gatherContext(client: QueryClient, root: PlanNode, measured: boolean): Promise<AnalyzeContext> {
+  const relations = collectPlanRelations(root)
+  const ctx: AnalyzeContext = { measured }
+  if (relations.length === 0) return ctx
+
+  const names = [...new Set(relations.map((r) => r.relation))]
+  const tableRows: Record<string, number> = {}
+  const existingIndexes: Record<string, ExistingIndex[]> = {}
+
+  try {
+    const res = await client.query(
+      `SELECT n.nspname AS schema, c.relname AS relation, c.reltuples AS rows
+       FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE c.relkind = 'r' AND c.relname = ANY($1)`,
+      [names],
+    )
+    for (const r of res.rows as { schema: string; relation: string; rows: number }[]) {
+      const val = Math.max(0, Math.round(r.rows))
+      tableRows[`${r.schema}.${r.relation}`] = val
+      if (tableRows[r.relation] === undefined) tableRows[r.relation] = val
+    }
+  } catch {
+    /* stats are optional */
+  }
+
+  try {
+    const res = await client.query(
+      `SELECT schemaname AS schema, tablename AS relation, indexname AS name, indexdef
+       FROM pg_indexes WHERE tablename = ANY($1)`,
+      [names],
+    )
+    for (const r of res.rows as { schema: string; relation: string; name: string; indexdef: string }[]) {
+      const columns = parseIndexColumns(r.indexdef)
+      if (columns.length === 0) continue
+      const idx: ExistingIndex = { name: r.name, columns }
+      for (const key of [`${r.schema}.${r.relation}`, r.relation]) {
+        ;(existingIndexes[key] ??= []).push(idx)
+      }
+    }
+  } catch {
+    /* indexes are optional */
+  }
+
+  ctx.tableRows = tableRows
+  ctx.existingIndexes = existingIndexes
+  return ctx
 }
 
 /**

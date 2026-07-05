@@ -3,11 +3,17 @@
  * These are shared types used by both the API and the UI.
  *
  * Design notes:
- * - Index suggestions are gated on real selectivity (matched / scanned), not an
- *   absolute removed-row count.
- * - Filter columns and sort keys on the SAME relation are merged into a single
- *   composite suggestion, with equality columns ordered before range columns and
- *   sort keys placed so the index can also satisfy the ORDER BY.
+ * - Index suggestions are gated on selectivity (matched / scanned). When the
+ *   statement was executed (EXPLAIN ANALYZE) this is measured; for write
+ *   statements we fall back to a planner-estimated selectivity (Plan Rows /
+ *   reltuples) and label it as an estimate.
+ * - Accumulators are keyed by scan ALIAS, not relation name, so joins and
+ *   self-joins attribute filter columns and sort keys to the correct relation
+ *   instance. Sort-key qualifiers are preserved and resolved against the scans
+ *   actually present under the Sort node.
+ * - A filter's top-level OR is split into separate groups: `a = 1 OR b = 2`
+ *   yields two single-column indexes (for a BitmapOr), never one bogus
+ *   composite `(a, b)`.
  * - Suggestions produced here are marked `estimated: true`. They are only
  *   promoted to `verified` after HypoPG cost re-estimation in the runner.
  */
@@ -72,6 +78,10 @@ export interface IndexSuggestion {
   estimated: boolean
   /** Filter selectivity that motivated the suggestion (matched / scanned), 0..1. */
   matchRate?: number
+  /** Whether matchRate was measured (ANALYZE) or planner-estimated (writes). */
+  selectivitySource?: "measured" | "estimated"
+  /** True when an existing index already leads with the same first column. */
+  overlapsExisting?: boolean
   /** Set by HypoPG validation in the runner. */
   verified?: boolean
   baselineCost?: number
@@ -94,6 +104,25 @@ export interface AnalysisResult {
   summary: PlanSummary
   findings: Finding[]
   indexSuggestions: IndexSuggestion[]
+}
+
+/** An index that already exists on a relation (from pg_indexes). */
+export interface ExistingIndex {
+  name: string
+  columns: string[]
+}
+
+/**
+ * Extra facts the runner can supply from the live database. All optional so the
+ * analyzer still works from a plan alone (e.g. in tests).
+ */
+export interface AnalyzeContext {
+  /** Whether the plan came from EXPLAIN ANALYZE (measured) vs plain EXPLAIN. */
+  measured?: boolean
+  /** relation name (bare and "schema.name") -> estimated row count (reltuples). */
+  tableRows?: Record<string, number>
+  /** relation name (bare and "schema.name") -> existing indexes. */
+  existingIndexes?: Record<string, ExistingIndex[]>
 }
 
 /** Postgres node types mapped to the concepts they demonstrate. */
@@ -130,11 +159,55 @@ export interface PredicateColumn {
 const NON_COLUMN =
   /^(text|int|int2|int4|int8|integer|smallint|numeric|bigint|real|double|float|timestamp|timestamptz|time|timetz|boolean|bool|date|json|jsonb|uuid|any|null|true|false)$/i
 
+/** Remove one or more layers of fully-enclosing parentheses. */
+function stripOuterParens(input: string): string {
+  let s = input.trim()
+  while (s.startsWith("(") && s.endsWith(")")) {
+    let depth = 0
+    let matched = true
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === "(") depth++
+      else if (s[i] === ")") {
+        depth--
+        // Closing paren reaches 0 before the end => the outer parens don't wrap
+        // the whole expression (e.g. "(a) OR (b)").
+        if (depth === 0 && i < s.length - 1) {
+          matched = false
+          break
+        }
+      }
+    }
+    if (matched) s = s.slice(1, -1).trim()
+    else break
+  }
+  return s
+}
+
+/** Split an expression on top-level (depth-0) OR, respecting parentheses. */
+function splitTopLevelOr(expr: string): string[] {
+  const parts: string[] = []
+  const upper = expr.toUpperCase()
+  let depth = 0
+  let last = 0
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]
+    if (ch === "(") depth++
+    else if (ch === ")") depth--
+    else if (depth === 0 && upper.startsWith(" OR ", i)) {
+      parts.push(expr.slice(last, i))
+      i += 3
+      last = i + 1
+    }
+  }
+  parts.push(expr.slice(last))
+  return parts.map((p) => p.trim()).filter(Boolean)
+}
+
 /**
- * Extract predicate columns from a filter / condition expression, classifying
- * each as an equality or range comparison. Columns that cannot use a btree
- * index usefully (e.g. `<>`) are dropped. When a column appears with both an
- * equality and a range operator, equality wins (it's the stronger index key).
+ * Extract predicate columns from a single AND-conjunction expression,
+ * classifying each as equality or range. Columns that cannot use a btree
+ * usefully (`<>`, `!=`) are dropped. Equality wins over range for the same
+ * column (it's the stronger leading key).
  */
 export function extractPredicateColumns(expr?: string): PredicateColumn[] {
   if (!expr) return []
@@ -146,7 +219,6 @@ export function extractPredicateColumns(expr?: string): PredicateColumn[] {
     const col = m[2] ?? m[1]
     if (!col || NON_COLUMN.test(col)) continue
     const opRaw = m[3].toUpperCase().replace(/\s+/g, " ")
-    // Not usefully indexable with a plain btree.
     if (opRaw === "<>" || opRaw === "!=") continue
     const kind: "eq" | "range" = opRaw === "=" || opRaw === "IN" || opRaw === "= ANY" ? "eq" : "range"
     const prev = found.get(col)
@@ -155,27 +227,44 @@ export function extractPredicateColumns(expr?: string): PredicateColumn[] {
   return [...found.entries()].map(([column, kind]) => ({ column, kind }))
 }
 
-/** Backwards-compatible helper: just the column names from a predicate. */
+/**
+ * Split a filter into AND-conjunction groups. A filter with a top-level OR
+ * produces one group per branch (each becomes its own index); a pure-AND filter
+ * produces a single group. Returns `[]` when nothing indexable is found.
+ */
+export function extractPredicateGroups(expr?: string): PredicateColumn[][] {
+  if (!expr) return []
+  const stripped = stripOuterParens(expr)
+  const branches = splitTopLevelOr(stripped)
+  return branches.map((b) => extractPredicateColumns(b)).filter((g) => g.length > 0)
+}
+
+/** Backwards-compatible helper: just the column names from a predicate (flat). */
 export function extractColumns(expr?: string): string[] {
   return extractPredicateColumns(expr).map((c) => c.column)
 }
 
-/** Strip a sort-key expression down to a bare column name, or null if it's an expression. */
-function cleanSortKey(key: string): string | null {
+/** Parse a sort-key expression into an optional qualifier + column, or null. */
+function parseSortKey(key: string): { qualifier?: string; column: string } | null {
   const base = key.replace(/\b(ASC|DESC|NULLS\s+(FIRST|LAST)|USING\s+\S+)\b/gi, "").trim()
   if (/[()]/.test(base)) return null // functional/expression key, not a plain column
-  const col = base.replace(/^[a-zA-Z0-9_]+\./, "").trim().replace(/^"|"$/g, "")
-  return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(col) ? col : null
+  const m = base.match(/^(?:"?([a-zA-Z_][a-zA-Z0-9_]*)"?\.)?"?([a-zA-Z_][a-zA-Z0-9_]*)"?$/)
+  if (!m) return null
+  return { qualifier: m[1], column: m[2] }
 }
 
-/** Find the relation of the nearest scan descendant (used to attach Sort keys). */
-function firstScanRelation(node: PlanNode): { relation: string; schema?: string } | undefined {
-  if (node["Relation Name"]) return { relation: node["Relation Name"], schema: node.Schema }
-  for (const child of node.Plans ?? []) {
-    const found = firstScanRelation(child)
-    if (found) return found
-  }
-  return undefined
+/** All scan nodes (nodes with a Relation Name) at or below `node`. */
+function collectScans(node: PlanNode): PlanNode[] {
+  const out: PlanNode[] = []
+  walk(node, (n) => {
+    if (n["Relation Name"]) out.push(n)
+  })
+  return out
+}
+
+/** The alias Postgres uses to qualify columns for a scan (defaults to relname). */
+function scanAlias(node: PlanNode): string {
+  return node["Alias"] ?? node["Relation Name"] ?? ""
 }
 
 /**
@@ -204,45 +293,66 @@ const SELECTIVE_MATCH_RATE = 0.3
 // Ignore tiny scans where a seq scan is always fine regardless of selectivity.
 const MIN_SCANNED_ROWS = 500
 
+/** One AND-group of predicate columns tied to a specific scan instance. */
+interface FilterGroup {
+  eq: string[]
+  range: string[]
+}
+
 interface RelAccum {
+  alias: string
   relation: string
   schema?: string
-  eqCols: string[]
-  rangeCols: string[]
+  /** Each group becomes one candidate index (multiple groups = OR predicate). */
+  filterGroups: FilterGroup[]
   sortKeys: string[]
   matchRate?: number
   scanned?: number
+  selectivitySource?: "measured" | "estimated"
   hasSelectiveFilter: boolean
   hasExpensiveSort: boolean
 }
 
-export function analyzePlan(explain: ExplainResult): AnalysisResult {
+export function analyzePlan(explain: ExplainResult, ctx: AnalyzeContext = {}): AnalysisResult {
   const findings: Finding[] = []
   const nodeCounts = new Map<string, number>()
   const concepts = new Set<string>()
   const scannedRelations = new Set<string>()
+  // Keyed by scan ALIAS so joins/self-joins stay separate.
   const rels = new Map<string, RelAccum>()
   let maxRowMisestimate: number | undefined
   let counter = 0
 
   const root = explain.Plan
 
-  const getAccum = (relation: string, schema?: string): RelAccum => {
-    let a = rels.get(relation)
+  const getAccum = (alias: string, relation: string, schema?: string): RelAccum => {
+    let a = rels.get(alias)
     if (!a) {
       a = {
+        alias,
         relation,
         schema,
-        eqCols: [],
-        rangeCols: [],
+        filterGroups: [],
         sortKeys: [],
         hasSelectiveFilter: false,
         hasExpensiveSort: false,
       }
-      rels.set(relation, a)
+      rels.set(alias, a)
     }
     if (schema && !a.schema) a.schema = schema
     return a
+  }
+
+  // Look up a per-relation fact by qualified name first, then bare name.
+  const lookupRows = (schema: string | undefined, relation: string): number | undefined => {
+    const t = ctx.tableRows
+    if (!t) return undefined
+    return t[qualified(schema, relation)] ?? t[`${schema}.${relation}`] ?? t[relation]
+  }
+  const lookupIndexes = (schema: string | undefined, relation: string): ExistingIndex[] => {
+    const e = ctx.existingIndexes
+    if (!e) return []
+    return e[qualified(schema, relation)] ?? e[`${schema}.${relation}`] ?? e[relation] ?? []
   }
 
   walk(root, (node) => {
@@ -277,48 +387,70 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
       }
     }
 
-    // Sequential scans: decide with real selectivity, not an absolute row count.
+    // Sequential scans: decide with selectivity (measured, or planner-estimated
+    // for write statements that weren't executed).
     if (type === "Seq Scan" && relation) {
       const removed = node["Rows Removed by Filter"] ?? 0
-      const matched = typeof actualRows === "number" ? actualRows : undefined
       const cost = node["Total Cost"] ?? 0
-      const preds = extractPredicateColumns(node["Filter"])
-      const eqCols = preds.filter((p) => p.kind === "eq").map((p) => p.column)
-      const rangeCols = preds.filter((p) => p.kind === "range").map((p) => p.column)
+      const groups = extractPredicateGroups(node["Filter"])
+      const indexable = groups.length > 0
 
-      // Selectivity = fraction of scanned rows that survived the filter.
-      const scanned = matched !== undefined ? matched + removed : undefined
-      const matchRate = scanned && scanned > 0 ? matched! / scanned : undefined
+      // Measured selectivity (EXPLAIN ANALYZE) when we have actual rows...
+      let matchRate: number | undefined
+      let scanned: number | undefined
+      let source: "measured" | "estimated" | undefined
+      if (typeof actualRows === "number") {
+        const matched = actualRows * loops
+        scanned = matched + removed * loops
+        matchRate = scanned > 0 ? matched / scanned : undefined
+        source = "measured"
+      } else if (typeof planRows === "number") {
+        // ...otherwise estimate from Plan Rows / table size (writes, plain EXPLAIN).
+        const total = lookupRows(node.Schema, relation)
+        if (total && total > 0) {
+          scanned = total
+          matchRate = Math.min(1, planRows / total)
+          source = "estimated"
+        }
+      }
 
-      const accum = getAccum(relation, node.Schema)
-      for (const c of eqCols) if (!accum.eqCols.includes(c)) accum.eqCols.push(c)
-      for (const c of rangeCols) if (!accum.rangeCols.includes(c)) accum.rangeCols.push(c)
-
-      const indexable = eqCols.length + rangeCols.length > 0
       const bigEnough = scanned === undefined ? cost > 1000 : scanned >= MIN_SCANNED_ROWS
       const selective = matchRate !== undefined && matchRate <= SELECTIVE_MATCH_RATE
 
       if (indexable && bigEnough && selective) {
+        const accum = getAccum(scanAlias(node), relation, node.Schema)
+        for (const g of groups) {
+          accum.filterGroups.push({
+            eq: g.filter((p) => p.kind === "eq").map((p) => p.column),
+            range: g.filter((p) => p.kind === "range").map((p) => p.column),
+          })
+        }
         accum.hasSelectiveFilter = true
         accum.matchRate = matchRate
         accum.scanned = scanned
+        accum.selectivitySource = source
+
+        const cols = groups.flatMap((g) => g.map((p) => p.column))
         const pct = (matchRate! * 100).toFixed(matchRate! < 0.1 ? 1 : 0)
+        const measuredWord = source === "measured" ? "matched" : "are estimated to match"
+        const estNote = source === "estimated" ? " (planner-estimated, since the statement was not executed)" : ""
         findings.push({
           id: `seq-${counter++}`,
           severity: matchRate! <= 0.05 ? "high" : "medium",
           title: `Selective filter scanned all of ${relation}`,
-          detail: `The filter on ${[...eqCols, ...rangeCols].join(", ")} matched only ${pct}% of the ${scanned!.toLocaleString()} rows read. An index can seek straight to those rows instead of reading the whole table.`,
+          detail: `The filter on ${cols.join(", ")} ${measuredWord} only ${pct}% of the ${scanned!.toLocaleString()} rows read${estNote}. An index can seek straight to those rows instead of reading the whole table.`,
           nodeType: type,
           relation,
           concept: "Indexes",
         })
       } else if (indexable && bigEnough && matchRate !== undefined && !selective) {
         // High match rate: an index would likely be ignored by the planner.
+        const cols = groups.flatMap((g) => g.map((p) => p.column))
         findings.push({
           id: `seq-${counter++}`,
           severity: "low",
           title: `Full scan on ${relation} (most rows match)`,
-          detail: `${(matchRate * 100).toFixed(0)}% of the ${scanned!.toLocaleString()} scanned rows matched the filter, so Postgres reads the table sequentially. An index here would probably be ignored — a sequential scan is the right choice when most rows are needed.`,
+          detail: `${(matchRate * 100).toFixed(0)}% of the ${scanned!.toLocaleString()} scanned rows match the filter on ${cols.join(", ")}, so Postgres reads the table sequentially. An index here would probably be ignored — a sequential scan is the right choice when most rows are needed.`,
           nodeType: type,
           relation,
           concept: "Sequential Scan",
@@ -336,29 +468,46 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
       }
     }
 
-    // Sorts: attach sort keys to the relation being sorted so we can build a
-    // composite index that also satisfies the ORDER BY.
+    // Sorts: attach each sort key to the RELATION IT BELONGS TO (resolved via
+    // its qualifier) so a composite index can also satisfy the ORDER BY.
     if (type === "Sort") {
       const method = node["Sort Method"]
       const external = method?.toLowerCase().includes("external")
       const spaceKB = node["Sort Space Used"] ?? 0
       const rawKeys = node["Sort Key"] ?? []
-      const cleanKeys = rawKeys.map(cleanSortKey).filter((k): k is string => !!k)
-      const scanRel = firstScanRelation(node)
+      const parsed = rawKeys.map(parseSortKey).filter((k): k is { qualifier?: string; column: string } => !!k)
 
-      if (scanRel && cleanKeys.length) {
-        const accum = getAccum(scanRel.relation, scanRel.schema)
-        for (const k of cleanKeys) if (!accum.sortKeys.includes(k)) accum.sortKeys.push(k)
-        if (external || spaceKB > 4096) accum.hasExpensiveSort = true
+      const scans = collectScans(node)
+      const byAlias = new Map(scans.map((s) => [scanAlias(s), s]))
+      const resolvedAccums = new Set<RelAccum>()
+      let allResolved = parsed.length > 0
+
+      for (const { qualifier, column } of parsed) {
+        let target: PlanNode | undefined
+        if (qualifier) target = byAlias.get(qualifier)
+        else if (scans.length === 1) target = scans[0] // unambiguous single-table sort
+        if (!target) {
+          allResolved = false
+          continue
+        }
+        const accum = getAccum(scanAlias(target), target["Relation Name"]!, target.Schema)
+        if (!accum.sortKeys.includes(column)) accum.sortKeys.push(column)
+        resolvedAccums.add(accum)
       }
 
+      // A sort-only index only makes sense if every key maps to ONE relation.
+      if ((external || spaceKB > 4096) && allResolved && resolvedAccums.size === 1) {
+        ;[...resolvedAccums][0].hasExpensiveSort = true
+      }
+
+      const keyText = parsed.map((p) => p.column).join(", ") || rawKeys.join(", ")
       findings.push({
         id: `sort-${counter++}`,
         severity: external ? "high" : "low",
         title: external ? "Disk-based (external) sort" : "In-memory sort",
         detail: external
-          ? `The sort spilled to disk (${method}). Increase work_mem, or add an index matching the sort order (${cleanKeys.join(", ") || rawKeys.join(", ")}) so Postgres can skip sorting entirely.`
-          : `Rows are sorted in memory (${method ?? "quicksort"}). An index on ${cleanKeys.join(", ") || "the ORDER BY columns"} could let Postgres return rows already ordered.`,
+          ? `The sort spilled to disk (${method}). Increase work_mem, or add an index matching the sort order (${keyText}) so Postgres can skip sorting entirely.`
+          : `Rows are sorted in memory (${method ?? "quicksort"}). An index on ${keyText || "the ORDER BY columns"} could let Postgres return rows already ordered.`,
         nodeType: type,
         concept: "Sort",
       })
@@ -374,9 +523,7 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
         const innerCost = inner["Total Cost"] ?? 0
         const expensive = innerLoops > 1 && (innerTotalMs > 10 || innerCost * innerLoops > 10000)
         if (expensive) {
-          const preds = extractPredicateColumns(inner["Filter"])
-          const eqCols = preds.filter((p) => p.kind === "eq").map((p) => p.column)
-          const rangeCols = preds.filter((p) => p.kind === "range").map((p) => p.column)
+          const groups = extractPredicateGroups(inner["Filter"])
           const rel = inner["Relation Name"]
           findings.push({
             id: `nl-${counter++}`,
@@ -389,11 +536,16 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
             relation: rel,
             concept: "Nested Loop Join",
           })
-          if (rel && eqCols.length + rangeCols.length > 0) {
-            const accum = getAccum(rel, inner.Schema)
-            for (const c of eqCols) if (!accum.eqCols.includes(c)) accum.eqCols.push(c)
-            for (const c of rangeCols) if (!accum.rangeCols.includes(c)) accum.rangeCols.push(c)
+          if (rel && groups.length > 0) {
+            const accum = getAccum(scanAlias(inner), rel, inner.Schema)
+            for (const g of groups) {
+              accum.filterGroups.push({
+                eq: g.filter((p) => p.kind === "eq").map((p) => p.column),
+                range: g.filter((p) => p.kind === "range").map((p) => p.column),
+              })
+            }
             accum.hasSelectiveFilter = true // join lookup is inherently selective
+            accum.selectivitySource = accum.selectivitySource ?? "measured"
           }
         }
       }
@@ -404,40 +556,92 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
     }
   })
 
-  // Build composite index suggestions from the merged per-relation info.
+  // Build index suggestions from the merged per-alias info.
   const suggestionMap = new Map<string, IndexSuggestion>()
-  for (const a of rels.values()) {
-    let columns: string[] = []
-    let rationale = ""
-    let matchRate: number | undefined
 
-    if (a.hasSelectiveFilter && a.eqCols.length + a.rangeCols.length > 0) {
-      columns = orderComposite(a.eqCols, a.sortKeys, a.rangeCols)
-      matchRate = a.matchRate
-      const parts: string[] = []
-      if (a.eqCols.length) parts.push(`filters on ${a.eqCols.join(", ")}`)
-      if (a.rangeCols.length) parts.push(`range on ${a.rangeCols.join(", ")}`)
-      if (a.sortKeys.length) parts.push(`ORDER BY ${a.sortKeys.join(", ")}`)
-      rationale = `Composite index covering ${parts.join(" + ")}. Equality columns are ordered first so the index can seek directly, and the sort key is included so Postgres can also skip the sort.`
-    } else if (a.hasExpensiveSort && a.sortKeys.length) {
-      columns = orderComposite([], a.sortKeys, [])
-      rationale = `An index on the ORDER BY columns (${a.sortKeys.join(
-        ", ",
-      )}) lets Postgres return rows in order and avoid the expensive sort.`
+  const consider = (
+    a: RelAccum,
+    columns: string[],
+    rationale: string,
+    matchRate?: number,
+    source?: "measured" | "estimated",
+  ) => {
+    if (!columns.length) return
+    const existing = lookupIndexes(a.schema, a.relation)
+
+    // Redundant: an existing index already covers these columns as a prefix.
+    const covering = existing.find((ix) => arrayStartsWith(ix.columns, columns))
+    if (covering) {
+      findings.push({
+        id: `idx-exists-${counter++}`,
+        severity: "low",
+        title: `Index already covers these columns on ${a.relation}`,
+        detail: `An index (${covering.name}) already exists on (${covering.columns.join(
+          ", ",
+        )}), yet the planner chose a sequential scan — the filter may not be selective enough to use it, or statistics may be stale. Creating another index would not help.`,
+        nodeType: "Seq Scan",
+        relation: a.relation,
+        concept: "Indexes",
+      })
+      return
     }
 
-    if (columns.length) {
-      const ddl = `CREATE INDEX ON ${qualified(a.schema, a.relation)} (${columns.join(", ")});`
-      if (!suggestionMap.has(ddl)) {
-        suggestionMap.set(ddl, {
-          relation: a.relation,
-          columns,
-          ddl,
-          rationale,
-          estimated: true,
-          matchRate,
-        })
+    // Partial overlap: an existing index leads with the same first column.
+    const overlap = existing.find((ix) => ix.columns[0] === columns[0])
+    let finalRationale = rationale
+    if (overlap) {
+      finalRationale += ` Note: index ${overlap.name} on (${overlap.columns.join(
+        ", ",
+      )}) already leads with "${columns[0]}" — consider extending it instead of adding an overlapping index.`
+    }
+
+    const ddl = `CREATE INDEX ON ${qualified(a.schema, a.relation)} (${columns.join(", ")});`
+    if (!suggestionMap.has(ddl)) {
+      suggestionMap.set(ddl, {
+        relation: a.relation,
+        columns,
+        ddl,
+        rationale: finalRationale,
+        estimated: true,
+        matchRate,
+        selectivitySource: source,
+        overlapsExisting: !!overlap,
+      })
+    }
+  }
+
+  for (const a of rels.values()) {
+    if (a.hasSelectiveFilter && a.filterGroups.length > 0) {
+      if (a.filterGroups.length === 1) {
+        // Pure AND (or single-branch) filter: one composite index that can also
+        // satisfy the ORDER BY.
+        const g = a.filterGroups[0]
+        const columns = orderComposite(g.eq, a.sortKeys, g.range)
+        const parts: string[] = []
+        if (g.eq.length) parts.push(`filters on ${g.eq.join(", ")}`)
+        if (g.range.length) parts.push(`range on ${g.range.join(", ")}`)
+        if (a.sortKeys.length) parts.push(`ORDER BY ${a.sortKeys.join(", ")}`)
+        const noun = columns.length > 1 ? "Composite index" : "Index"
+        let rationale = `${noun} covering ${parts.join(" + ")}. Equality columns are ordered first so the index can seek directly to the matching band.`
+        if (a.sortKeys.length) {
+          rationale += " The sort key follows so Postgres can also skip the ORDER BY sort."
+        }
+        consider(a, columns, rationale, a.matchRate, a.selectivitySource)
+      } else {
+        // Top-level OR: one index per branch so Postgres can combine them with a
+        // BitmapOr. Sort keys are NOT folded in (the sort happens after the OR).
+        for (const g of a.filterGroups) {
+          const columns = orderComposite(g.eq, [], g.range)
+          const rationale = `Part of an OR predicate. Separate single-purpose indexes on each branch let Postgres combine them with a BitmapOr instead of scanning the whole table; one composite index cannot serve an OR.`
+          consider(a, columns, rationale, a.matchRate, a.selectivitySource)
+        }
       }
+    } else if (a.hasExpensiveSort && a.sortKeys.length) {
+      const columns = orderComposite([], a.sortKeys, [])
+      const rationale = `An index on the ORDER BY columns (${a.sortKeys.join(
+        ", ",
+      )}) lets Postgres return rows in order and avoid the expensive sort.`
+      consider(a, columns, rationale)
     }
   }
 
@@ -472,6 +676,12 @@ export function analyzePlan(explain: ExplainResult): AnalysisResult {
     findings: sortBySeverity(findings),
     indexSuggestions: [...suggestionMap.values()],
   }
+}
+
+/** True when `arr` begins with every element of `prefix`, in order. */
+function arrayStartsWith(arr: string[], prefix: string[]): boolean {
+  if (prefix.length > arr.length) return false
+  return prefix.every((c, i) => arr[i] === c)
 }
 
 const SEVERITY_ORDER: Record<Severity, number> = { high: 0, medium: 1, low: 2, info: 3 }
