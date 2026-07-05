@@ -1,24 +1,68 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, Check, AlertTriangle, Info, AlertOctagon, Lightbulb, Database } from "lucide-react"
+import {
+  Copy,
+  Check,
+  AlertTriangle,
+  Info,
+  AlertOctagon,
+  Lightbulb,
+  Database,
+  Wrench,
+  ShieldCheck,
+  FlaskConical,
+  TrendingDown,
+} from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { InfoHint } from "./info-hint"
 import { METRIC_GLOSSARY } from "@/lib/glossary"
-import type { AnalysisResult, Finding, Severity } from "@/lib/analyze"
+import type { AnalysisResult, Finding, IndexSuggestion, Severity } from "@/lib/analyze"
 
 const SEVERITY_META: Record<
   Severity,
-  { label: string; icon: typeof Info; className: string; dot: string }
+  { label: string; icon: typeof Info; className: string; dot: string; border: string }
 > = {
-  high: { label: "High", icon: AlertOctagon, className: "text-destructive", dot: "bg-destructive" },
-  medium: { label: "Medium", icon: AlertTriangle, className: "text-warning", dot: "bg-warning" },
-  low: { label: "Low", icon: Info, className: "text-muted-foreground", dot: "bg-muted-foreground" },
-  info: { label: "Info", icon: Info, className: "text-success", dot: "bg-success" },
+  high: {
+    label: "High",
+    icon: AlertOctagon,
+    className: "text-destructive",
+    dot: "bg-destructive",
+    border: "border-l-destructive",
+  },
+  medium: {
+    label: "Medium",
+    icon: AlertTriangle,
+    className: "text-warning",
+    dot: "bg-warning",
+    border: "border-l-warning",
+  },
+  low: {
+    label: "Low",
+    icon: Info,
+    className: "text-muted-foreground",
+    dot: "bg-muted-foreground",
+    border: "border-l-muted-foreground/50",
+  },
+  info: {
+    label: "Info",
+    icon: Info,
+    className: "text-success",
+    dot: "bg-success",
+    border: "border-l-success",
+  },
 }
+
+// Findings are shown grouped so what deserves attention is obvious.
+const GROUPS: { severity: Severity; title: string }[] = [
+  { severity: "high", title: "Critical" },
+  { severity: "medium", title: "Needs attention" },
+  { severity: "low", title: "Minor" },
+  { severity: "info", title: "Looks healthy" },
+]
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -40,19 +84,58 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function FindingCard({ finding }: { finding: Finding }) {
+/** Verified (HypoPG cost-validated) vs. estimated (heuristic only) badge. */
+function SuggestionBadge({ s }: { s: IndexSuggestion }) {
+  if (s.verified) {
+    const raw = Math.max(0, s.improvementPct ?? 0)
+    // Avoid a misleading "100%": keep a decimal once we're near-total.
+    const pct = raw >= 99 && raw < 100 ? raw.toFixed(1) : Math.round(raw).toString()
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
+        <ShieldCheck className="h-3 w-3" />
+        Verified · −{pct}% cost
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <FlaskConical className="h-3 w-3" />
+      Estimated
+      <InfoHint>
+        This index was inferred from the filter and sort columns but not cost-validated (the{" "}
+        <span className="font-mono">hypopg</span> extension isn&apos;t available on this database). Test it before
+        relying on it.
+      </InfoHint>
+    </span>
+  )
+}
+
+/** Before/after planner cost line for a verified suggestion. */
+function CostDelta({ s }: { s: IndexSuggestion }) {
+  if (!s.verified || s.baselineCost === undefined || s.hypotheticalCost === undefined) return null
+  return (
+    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
+      <TrendingDown className="h-3.5 w-3.5" />
+      <span>
+        Planner cost{" "}
+        <span className="font-mono text-muted-foreground line-through">{s.baselineCost.toFixed(0)}</span>
+        {" → "}
+        <span className="font-mono font-semibold">{s.hypotheticalCost.toFixed(0)}</span>
+      </span>
+    </p>
+  )
+}
+
+function FindingCard({ finding, fix }: { finding: Finding; fix?: IndexSuggestion }) {
   const meta = SEVERITY_META[finding.severity]
   const Icon = meta.icon
   return (
-    <div className="rounded-lg border border-border bg-card/50 p-4">
+    <div className={cn("rounded-lg border border-l-2 border-border bg-card/50 p-4", meta.border)}>
       <div className="flex items-start gap-3">
         <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", meta.className)} />
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <h4 className="text-sm font-medium text-foreground text-pretty">{finding.title}</h4>
-            <Badge variant="outline" className={cn("text-[10px]", meta.className)}>
-              {meta.label}
-            </Badge>
             {finding.concept && (
               <Badge variant="secondary" className="text-[10px]">
                 {finding.concept}
@@ -60,6 +143,25 @@ function FindingCard({ finding }: { finding: Finding }) {
             )}
           </div>
           <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground text-pretty">{finding.detail}</p>
+
+          {fix && (
+            <div className="mt-3 rounded-md border border-success/30 bg-success/5 p-2.5">
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
+                <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-success">
+                  <Wrench className="h-3.5 w-3.5" />
+                  Suggested fix
+                </span>
+                <div className="flex items-center gap-2">
+                  <SuggestionBadge s={fix} />
+                  <CopyButton text={fix.ddl} />
+                </div>
+              </div>
+              <pre className="overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-success">
+                {fix.ddl}
+              </pre>
+              <CostDelta s={fix} />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -72,6 +174,15 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
     acc[f.severity] = (acc[f.severity] ?? 0) + 1
     return acc
   }, {})
+
+  // Attach an index suggestion to the first matching finding on that relation.
+  const usedFixes = new Set<string>()
+  const fixFor = (finding: Finding): IndexSuggestion | undefined => {
+    if (!finding.relation) return undefined
+    const match = indexSuggestions.find((s) => s.relation === finding.relation && !usedFixes.has(s.ddl))
+    if (match) usedFixes.add(match.ddl)
+    return match
+  }
 
   return (
     <div className="space-y-6">
@@ -111,9 +222,9 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
         </div>
       )}
 
-      {/* Findings */}
+      {/* Findings, grouped by priority */}
       <div>
-        <div className="mb-2 flex items-center justify-between">
+        <div className="mb-3 flex items-center justify-between">
           <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Findings ({findings.length})
           </h3>
@@ -129,10 +240,27 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
             )}
           </div>
         </div>
-        <div className="space-y-2">
-          {findings.map((f) => (
-            <FindingCard key={f.id} finding={f} />
-          ))}
+
+        <div className="space-y-5">
+          {GROUPS.map(({ severity, title }) => {
+            const group = findings.filter((f) => f.severity === severity)
+            if (group.length === 0) return null
+            const meta = SEVERITY_META[severity]
+            return (
+              <div key={severity}>
+                <div className="mb-2 flex items-center gap-2">
+                  <span className={cn("h-2 w-2 rounded-full", meta.dot)} />
+                  <h4 className={cn("text-xs font-semibold uppercase tracking-wide", meta.className)}>{title}</h4>
+                  <span className="text-xs text-muted-foreground">({group.length})</span>
+                </div>
+                <div className="space-y-2">
+                  {group.map((f) => (
+                    <FindingCard key={f.id} finding={f} fix={fixFor(f)} />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </div>
       </div>
 
@@ -144,23 +272,29 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
             Suggested indexes ({indexSuggestions.length})
             <InfoHint>
               An index is a lookup structure that lets Postgres find matching rows without scanning the whole
-              table. Copy the <span className="font-mono">CREATE INDEX</span> statement and run it on your
-              database, then re-analyze to see the effect.
+              table. <span className="text-success">Verified</span> suggestions were cost-checked with hypothetical
+              (HypoPG) indexes; <span className="text-muted-foreground">Estimated</span> ones are inferred from the
+              query and should be tested. Copy the <span className="font-mono">CREATE INDEX</span> statement, run it,
+              then re-analyze.
             </InfoHint>
           </h3>
           <div className="space-y-2">
             {indexSuggestions.map((s, i) => (
               <div key={i} className="rounded-lg border border-border bg-card/50 p-3">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Database className="h-3.5 w-3.5" />
                     <span className="font-mono text-foreground">{s.relation}</span>
                   </div>
-                  <CopyButton text={s.ddl} />
+                  <div className="flex items-center gap-2">
+                    <SuggestionBadge s={s} />
+                    <CopyButton text={s.ddl} />
+                  </div>
                 </div>
                 <pre className="mt-2 overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-success">
                   {s.ddl}
                 </pre>
+                <CostDelta s={s} />
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{s.rationale}</p>
               </div>
             ))}
@@ -170,5 +304,3 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
     </div>
   )
 }
-
-

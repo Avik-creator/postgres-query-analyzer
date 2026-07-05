@@ -53,8 +53,11 @@ export function checkStatement(sqlRaw: string): StatementCheck {
  * plan-only EXPLAIN so we never mutate data.
  */
 export function buildExplain(sql: string, analyze: boolean): string {
+  // VERBOSE is enabled so the plan JSON includes each scan's "Schema", letting
+  // us emit schema-qualified index DDL that both HypoPG validation and the user
+  // can actually run (tables often live outside the search_path).
   const options = analyze
-    ? "ANALYZE true, BUFFERS true, VERBOSE false, FORMAT JSON"
-    : "VERBOSE false, FORMAT JSON"
+    ? "ANALYZE true, BUFFERS true, VERBOSE true, FORMAT JSON"
+    : "VERBOSE true, FORMAT JSON"
   return `EXPLAIN (${options}) ${sql}`
 }
