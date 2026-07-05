@@ -16,7 +16,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: 'pgxray — Postgres Query Analyzer',
   description:
-    'Paste SQL, visualize the execution plan, get index suggestions and AI-powered rewrites, and benchmark queries against your database.',
+    'Paste SQL, visualize the execution plan, and get index suggestions and AI-powered rewrites for your Postgres queries.',
   generator: 'v0.app',
   icons: {
     icon: [

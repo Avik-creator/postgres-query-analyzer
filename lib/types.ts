@@ -28,18 +28,6 @@ export interface TableInfo {
   indexes: IndexInfo[]
 }
 
-export interface BenchmarkResult {
-  label: string
-  sql: string
-  ok: boolean
-  error?: string
-  executionTime?: number
-  planningTime?: number
-  totalCost?: number
-  runs?: number[]
-  nodeTypes?: string[]
-}
-
 export interface AiSuggestion {
   summary: string
   rewrittenQuery: string

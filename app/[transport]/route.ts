@@ -1,6 +1,6 @@
 import { createMcpHandler } from "mcp-handler"
 import { z } from "zod"
-import { runAnalyze, getSchema, runBenchmark } from "@/lib/runner"
+import { runAnalyze, getSchema } from "@/lib/runner"
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -65,28 +65,6 @@ const handler = createMcpHandler((server) => {
     },
   )
 
-  server.registerTool(
-    "benchmark_queries",
-    {
-      title: "Benchmark queries",
-      description:
-        "Run multiple read-only queries with EXPLAIN ANALYZE and compare median execution time, planning time, and cost.",
-      inputSchema: {
-        queries: z
-          .array(z.object({ label: z.string(), sql: z.string() }))
-          .describe("Queries to benchmark, each with a label."),
-        connectionString: z.string().optional().describe("Optional postgres:// connection string."),
-      },
-    },
-    async ({ queries, connectionString }) => {
-      try {
-        const results = await runBenchmark(queries, connFrom(connectionString))
-        return textContent({ results })
-      } catch (err) {
-        return textContent({ error: err instanceof Error ? err.message : "Benchmark failed." })
-      }
-    },
-  )
 })
 
 export { handler as GET, handler as POST, handler as DELETE }

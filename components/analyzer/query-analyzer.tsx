@@ -21,10 +21,9 @@ import { SchemaSidebar } from "./schema-sidebar"
 import { PlanNode, PlanLegend } from "./plan-node"
 import { AnalysisPanel } from "./analysis-panel"
 import { AiPanel } from "./ai-panel"
-import { BenchmarkPanel } from "./benchmark-panel"
 import { McpDialog } from "./mcp-dialog"
 import { LearnDialog } from "./learn-dialog"
-import type { AnalyzeResponse, BenchmarkResult, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
+import type { AnalyzeResponse, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
 import { SAMPLE_QUERIES } from "@/lib/sample-queries"
 
 function fmtMs(n: number | undefined) {
@@ -61,11 +60,6 @@ export function QueryAnalyzer() {
   // ai
   const [aiRunning, setAiRunning] = useState(false)
   const [ai, setAi] = useState<AiSuggestion | null>(null)
-
-  // benchmark
-  const [benchLoading, setBenchLoading] = useState(false)
-  const [benchResults, setBenchResults] = useState<BenchmarkResult[]>([])
-  const [compareSql, setCompareSql] = useState("")
 
   const [tab, setTab] = useState("plan")
 
@@ -125,7 +119,6 @@ export function QueryAnalyzer() {
     setResult(null)
     setAnalysisError(null)
     setAi(null)
-    setBenchResults([])
     if (next === "demo") {
       setConnected(false)
       setSchemaLoading(true)
@@ -151,7 +144,6 @@ export function QueryAnalyzer() {
     setAnalyzing(true)
     setAnalysisError(null)
     setAi(null)
-    setBenchResults([])
     try {
       const res = await fetch("/api/analyze", {
         method: "POST",
@@ -190,35 +182,6 @@ export function QueryAnalyzer() {
       toast.error(err instanceof Error ? err.message : "AI analysis failed")
     } finally {
       setAiRunning(false)
-    }
-  }
-
-  async function handleBenchmark() {
-    const queries = [{ label: "Original query", sql }]
-    if (compareSql.trim() && compareSql.trim() !== sql.trim()) {
-      queries.push({ label: "Your comparison", sql: compareSql })
-    }
-    if (
-      ai?.rewrittenQuery &&
-      ai.rewrittenQuery.trim() !== sql.trim() &&
-      ai.rewrittenQuery.trim() !== compareSql.trim()
-    ) {
-      queries.push({ label: "AI rewrite", sql: ai.rewrittenQuery })
-    }
-    setBenchLoading(true)
-    try {
-      const res = await fetch("/api/benchmark", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...connBody(), queries }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
-      setBenchResults(data.results ?? [])
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Benchmark failed")
-    } finally {
-      setBenchLoading(false)
     }
   }
 
@@ -336,7 +299,7 @@ export function QueryAnalyzer() {
                 <div className="rounded-lg border border-border bg-card">
                   <Tabs value={tab} onValueChange={setTab} className="flex flex-col">
                     <div className="border-b border-border p-2">
-                      <TabsList className="grid w-full grid-cols-4 sm:w-auto sm:inline-grid">
+                      <TabsList className="grid w-full grid-cols-3 sm:w-auto sm:inline-grid">
                         <TabsTrigger value="plan" className="gap-1.5 text-xs">
                           <ListTree className="size-3.5" />
                           Plan
@@ -348,10 +311,6 @@ export function QueryAnalyzer() {
                         <TabsTrigger value="ai" className="gap-1.5 text-xs">
                           <Sparkles className="size-3.5" />
                           AI
-                        </TabsTrigger>
-                        <TabsTrigger value="bench" className="gap-1.5 text-xs">
-                          <Gauge className="size-3.5" />
-                          Bench
                         </TabsTrigger>
                       </TabsList>
                     </div>
@@ -380,21 +339,6 @@ export function QueryAnalyzer() {
 
                       <TabsContent value="ai" className="mt-0">
                         <AiPanel ai={ai} loading={aiRunning} onGenerate={handleAi} onUseRewrite={setSql} />
-                      </TabsContent>
-
-                      <TabsContent value="bench" className="mt-0">
-                        <BenchmarkPanel
-                          results={benchResults}
-                          loading={benchLoading}
-                          canRun={!!sql.trim()}
-                          onRun={handleBenchmark}
-                          compareSql={compareSql}
-                          onCompareSqlChange={setCompareSql}
-                          hasAiRewrite={
-                            !!ai?.rewrittenQuery && ai.rewrittenQuery.trim() !== sql.trim()
-                          }
-                          onUseAiRewrite={ai?.rewrittenQuery ? () => setCompareSql(ai.rewrittenQuery) : undefined}
-                        />
                       </TabsContent>
                     </div>
                   </Tabs>

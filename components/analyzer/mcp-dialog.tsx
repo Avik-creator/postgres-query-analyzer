@@ -16,7 +16,6 @@ import { Badge } from "@/components/ui/badge"
 const TOOLS = [
   { name: "analyze_query", desc: "Return the EXPLAIN plan + heuristic findings and index suggestions for a SQL query." },
   { name: "get_schema", desc: "List tables, columns, and indexes for the connected database." },
-  { name: "benchmark_queries", desc: "Benchmark one or more read-only queries and return median execution time." },
 ]
 
 function Row({ text }: { text: string }) {
@@ -71,8 +70,8 @@ export function McpDialog() {
             </Badge>
           </DialogTitle>
           <DialogDescription className="text-pretty">
-            This analyzer is exposed as an MCP server so agents (Claude, Cursor, etc.) can analyze and benchmark
-            queries directly against your database.
+            This analyzer is exposed as an MCP server so agents (Claude, Cursor, etc.) can analyze queries and
+            inspect your schema directly against your database.
           </DialogDescription>
         </DialogHeader>
 
