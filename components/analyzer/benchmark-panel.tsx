@@ -1,6 +1,6 @@
 "use client"
 
-import { Gauge, Loader2, TrendingDown, TrendingUp, AlertCircle, Minus, Trophy, Timer } from "lucide-react"
+import { Gauge, Loader2, TrendingDown, TrendingUp, AlertCircle, Minus, Trophy, Timer, Sparkles } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { InfoHint } from "./info-hint"
@@ -49,11 +49,19 @@ export function BenchmarkPanel({
   loading,
   canRun,
   onRun,
+  compareSql,
+  onCompareSqlChange,
+  hasAiRewrite,
+  onUseAiRewrite,
 }: {
   results: BenchmarkResult[]
   loading: boolean
   canRun: boolean
   onRun: () => void
+  compareSql: string
+  onCompareSqlChange: (v: string) => void
+  hasAiRewrite: boolean
+  onUseAiRewrite?: () => void
 }) {
   const successful = results.filter((r) => r.ok && r.executionTime !== undefined)
   const maxTime = Math.max(...successful.map((r) => r.executionTime ?? 0), 0.001)

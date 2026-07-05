@@ -65,6 +65,7 @@ export function QueryAnalyzer() {
   // benchmark
   const [benchLoading, setBenchLoading] = useState(false)
   const [benchResults, setBenchResults] = useState<BenchmarkResult[]>([])
+  const [compareSql, setCompareSql] = useState("")
 
   const [tab, setTab] = useState("plan")
 
@@ -194,7 +195,14 @@ export function QueryAnalyzer() {
 
   async function handleBenchmark() {
     const queries = [{ label: "Original query", sql }]
-    if (ai?.rewrittenQuery && ai.rewrittenQuery.trim() !== sql.trim()) {
+    if (compareSql.trim() && compareSql.trim() !== sql.trim()) {
+      queries.push({ label: "Your comparison", sql: compareSql })
+    }
+    if (
+      ai?.rewrittenQuery &&
+      ai.rewrittenQuery.trim() !== sql.trim() &&
+      ai.rewrittenQuery.trim() !== compareSql.trim()
+    ) {
       queries.push({ label: "AI rewrite", sql: ai.rewrittenQuery })
     }
     setBenchLoading(true)
@@ -380,6 +388,12 @@ export function QueryAnalyzer() {
                           loading={benchLoading}
                           canRun={!!sql.trim()}
                           onRun={handleBenchmark}
+                          compareSql={compareSql}
+                          onCompareSqlChange={setCompareSql}
+                          hasAiRewrite={
+                            !!ai?.rewrittenQuery && ai.rewrittenQuery.trim() !== sql.trim()
+                          }
+                          onUseAiRewrite={ai?.rewrittenQuery ? () => setCompareSql(ai.rewrittenQuery) : undefined}
                         />
                       </TabsContent>
                     </div>
