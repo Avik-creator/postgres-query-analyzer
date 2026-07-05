@@ -432,7 +432,7 @@ export function analyzePlan(explain: ExplainResult, ctx: AnalyzeContext = {}): A
 
         const cols = groups.flatMap((g) => g.map((p) => p.column))
         const pct = (matchRate! * 100).toFixed(matchRate! < 0.1 ? 1 : 0)
-        const measuredWord = source === "measured" ? "matched" : "are estimated to match"
+        const measuredWord = source === "measured" ? "matched" : "is estimated to match"
         const estNote = source === "estimated" ? " (planner-estimated, since the statement was not executed)" : ""
         findings.push({
           id: `seq-${counter++}`,
