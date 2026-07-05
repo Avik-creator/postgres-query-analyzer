@@ -6,7 +6,6 @@ import {
   ListTree,
   Sparkles,
   Gauge,
-  ServerCog,
   Terminal,
   ArrowDownWideNarrow,
   AlertTriangle,
@@ -24,6 +23,7 @@ import { AnalysisPanel } from "./analysis-panel"
 import { AiPanel } from "./ai-panel"
 import { McpDialog } from "./mcp-dialog"
 import { LearnDialog } from "./learn-dialog"
+import { Logo } from "./logo"
 import { InfoHint } from "./info-hint"
 import { METRIC_GLOSSARY } from "@/lib/glossary"
 import type { AnalyzeResponse, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
@@ -214,7 +214,7 @@ export function QueryAnalyzer() {
       <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
           <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <ServerCog className="size-5" />
+            <Logo className="size-5" />
           </div>
           <div>
             <h1 className="font-mono text-sm font-semibold leading-none tracking-tight text-foreground">pgxray</h1>

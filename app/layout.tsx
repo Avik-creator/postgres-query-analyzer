@@ -13,27 +13,55 @@ const ibmPlexMono = IBM_Plex_Mono({
   variable: '--font-ibm-plex-mono',
 })
 
+const SITE_URL = 'https://pganalyzer.avikmukherjee.com'
+const TITLE = 'pgxray — Postgres Query Analyzer'
+const DESCRIPTION =
+  'Paste SQL, visualize the execution plan, and get index suggestions and AI-powered rewrites for your Postgres queries.'
+
 export const metadata: Metadata = {
-  title: 'pgxray — Postgres Query Analyzer',
-  description:
-    'Paste SQL, visualize the execution plan, and get index suggestions and AI-powered rewrites for your Postgres queries.',
+  metadataBase: new URL(SITE_URL),
+  title: TITLE,
+  description: DESCRIPTION,
   generator: 'v0.app',
+  applicationName: 'pgxray',
+  keywords: [
+    'Postgres',
+    'PostgreSQL',
+    'query analyzer',
+    'EXPLAIN ANALYZE',
+    'execution plan',
+    'index suggestions',
+    'SQL performance',
+    'database tuning',
+  ],
+  authors: [{ name: 'Avik Mukherjee' }],
+  alternates: {
+    canonical: SITE_URL,
+  },
   icons: {
-    icon: [
+    icon: [{ url: '/icon.svg', type: 'image/svg+xml' }],
+    apple: '/apple-icon.png',
+  },
+  openGraph: {
+    type: 'website',
+    url: SITE_URL,
+    siteName: 'pgxray',
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [
       {
-        url: '/icon-light-32x32.png',
-        media: '(prefers-color-scheme: light)',
-      },
-      {
-        url: '/icon-dark-32x32.png',
-        media: '(prefers-color-scheme: dark)',
-      },
-      {
-        url: '/icon.svg',
-        type: 'image/svg+xml',
+        url: '/og-image.png',
+        width: 1200,
+        height: 630,
+        alt: 'pgxray — Postgres Query Analyzer',
       },
     ],
-    apple: '/apple-icon.png',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: TITLE,
+    description: DESCRIPTION,
+    images: ['/og-image.png'],
   },
 }
 
