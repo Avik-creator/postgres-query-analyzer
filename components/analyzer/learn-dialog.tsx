@@ -73,7 +73,7 @@ export function LearnDialog() {
                 <Gauge className="size-4 text-primary" />
                 Metrics on every node
               </h3>
-              <Accordion openMultiple={false} className="w-full">
+              <Accordion className="w-full">
                 {METRIC_ORDER.map((key) => {
                   const e = METRIC_GLOSSARY[key]
                   if (!e) return null
@@ -96,7 +96,7 @@ export function LearnDialog() {
                 <Lightbulb className="size-4 text-primary" />
                 Common node types
               </h3>
-              <Accordion openMultiple={false} className="w-full">
+              <Accordion className="w-full">
                 {Object.entries(NODE_GLOSSARY).map(([key, e]) => (
                   <AccordionItem key={key} value={key}>
                     <AccordionTrigger className="text-sm">
