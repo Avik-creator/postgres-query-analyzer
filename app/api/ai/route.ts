@@ -1,7 +1,10 @@
 import { NextResponse } from "next/server"
-import { generateText, Output } from "ai"
+import { generateObject } from "ai"
+import { createGroq } from "@ai-sdk/groq"
 import { z } from "zod"
 import { runAnalyze, getSchema } from "@/lib/runner"
+
+const groq = createGroq({ apiKey: process.env.GROQ_API_KEY })
 
 export const runtime = "nodejs"
 export const maxDuration = 60
@@ -36,6 +39,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Provide a SQL query." }, { status: 400 })
     }
 
+    if (!process.env.GROQ_API_KEY) {
+      return NextResponse.json(
+        { error: "GROQ_API_KEY is not set. Add it in Project Settings to enable AI analysis." },
+        { status: 400 },
+      )
+    }
+
     const conn = { source: body?.source, connectionString: body?.connectionString }
 
     // Gather plan + schema context for grounding the model.
@@ -53,9 +63,9 @@ export async function POST(req: Request) {
       )
       .join("\n")
 
-    const { output } = await generateText({
-      model: "openai/gpt-4.1-mini",
-      output: Output.object({ schema: aiSchema }),
+    const { object } = await generateObject({
+      model: groq("openai/gpt-oss-120b"),
+      schema: aiSchema,
       system:
         "You are a senior PostgreSQL performance engineer. Given a query, its EXPLAIN plan, and the schema, produce actionable, correct advice. Only suggest indexes that would genuinely help. Keep explanations concise and practical. Never invent columns that are not in the schema.",
       prompt: [
@@ -74,7 +84,7 @@ export async function POST(req: Request) {
       ].join("\n"),
     })
 
-    return NextResponse.json({ ai: output })
+    return NextResponse.json({ ai: object })
   } catch (err) {
     const message = err instanceof Error ? err.message : "AI analysis failed."
     return NextResponse.json({ error: message }, { status: 400 })
