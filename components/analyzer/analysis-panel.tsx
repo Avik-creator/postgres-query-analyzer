@@ -1,7 +1,19 @@
 "use client"
 
 import { useState } from "react"
-import { Copy, Check, AlertTriangle, Info, AlertOctagon, Lightbulb, Database, Wrench } from "lucide-react"
+import {
+  Copy,
+  Check,
+  AlertTriangle,
+  Info,
+  AlertOctagon,
+  Lightbulb,
+  Database,
+  Wrench,
+  ShieldCheck,
+  FlaskConical,
+  TrendingDown,
+} from "lucide-react"
 import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
@@ -72,6 +84,48 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
+/** Verified (HypoPG cost-validated) vs. estimated (heuristic only) badge. */
+function SuggestionBadge({ s }: { s: IndexSuggestion }) {
+  if (s.verified) {
+    const raw = Math.max(0, s.improvementPct ?? 0)
+    // Avoid a misleading "100%": keep a decimal once we're near-total.
+    const pct = raw >= 99 && raw < 100 ? raw.toFixed(1) : Math.round(raw).toString()
+    return (
+      <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[10px] font-medium text-success">
+        <ShieldCheck className="h-3 w-3" />
+        Verified · −{pct}% cost
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
+      <FlaskConical className="h-3 w-3" />
+      Estimated
+      <InfoHint>
+        This index was inferred from the filter and sort columns but not cost-validated (the{" "}
+        <span className="font-mono">hypopg</span> extension isn&apos;t available on this database). Test it before
+        relying on it.
+      </InfoHint>
+    </span>
+  )
+}
+
+/** Before/after planner cost line for a verified suggestion. */
+function CostDelta({ s }: { s: IndexSuggestion }) {
+  if (!s.verified || s.baselineCost === undefined || s.hypotheticalCost === undefined) return null
+  return (
+    <p className="mt-1.5 flex items-center gap-1.5 text-xs text-success">
+      <TrendingDown className="h-3.5 w-3.5" />
+      <span>
+        Planner cost{" "}
+        <span className="font-mono text-muted-foreground line-through">{s.baselineCost.toFixed(0)}</span>
+        {" → "}
+        <span className="font-mono font-semibold">{s.hypotheticalCost.toFixed(0)}</span>
+      </span>
+    </p>
+  )
+}
+
 function FindingCard({ finding, fix }: { finding: Finding; fix?: IndexSuggestion }) {
   const meta = SEVERITY_META[finding.severity]
   const Icon = meta.icon
@@ -92,16 +146,20 @@ function FindingCard({ finding, fix }: { finding: Finding; fix?: IndexSuggestion
 
           {fix && (
             <div className="mt-3 rounded-md border border-success/30 bg-success/5 p-2.5">
-              <div className="mb-1.5 flex items-center justify-between gap-2">
+              <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
                 <span className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-success">
                   <Wrench className="h-3.5 w-3.5" />
                   Suggested fix
                 </span>
-                <CopyButton text={fix.ddl} />
+                <div className="flex items-center gap-2">
+                  <SuggestionBadge s={fix} />
+                  <CopyButton text={fix.ddl} />
+                </div>
               </div>
               <pre className="overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-success">
                 {fix.ddl}
               </pre>
+              <CostDelta s={fix} />
             </div>
           )}
         </div>
@@ -214,23 +272,29 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
             Suggested indexes ({indexSuggestions.length})
             <InfoHint>
               An index is a lookup structure that lets Postgres find matching rows without scanning the whole
-              table. Copy the <span className="font-mono">CREATE INDEX</span> statement and run it on your
-              database, then re-analyze to see the effect.
+              table. <span className="text-success">Verified</span> suggestions were cost-checked with hypothetical
+              (HypoPG) indexes; <span className="text-muted-foreground">Estimated</span> ones are inferred from the
+              query and should be tested. Copy the <span className="font-mono">CREATE INDEX</span> statement, run it,
+              then re-analyze.
             </InfoHint>
           </h3>
           <div className="space-y-2">
             {indexSuggestions.map((s, i) => (
               <div key={i} className="rounded-lg border border-border bg-card/50 p-3">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Database className="h-3.5 w-3.5" />
                     <span className="font-mono text-foreground">{s.relation}</span>
                   </div>
-                  <CopyButton text={s.ddl} />
+                  <div className="flex items-center gap-2">
+                    <SuggestionBadge s={s} />
+                    <CopyButton text={s.ddl} />
+                  </div>
                 </div>
                 <pre className="mt-2 overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-success">
                   {s.ddl}
                 </pre>
+                <CostDelta s={s} />
                 <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{s.rationale}</p>
               </div>
             ))}
