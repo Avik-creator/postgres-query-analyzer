@@ -1,9 +1,10 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
-import { GitBranch, ListTree, Sparkles, Gauge, ServerCog, Terminal } from "lucide-react"
+import { GitBranch, ListTree, Sparkles, Gauge, ServerCog, Terminal, ArrowDownWideNarrow } from "lucide-react"
 import { toast } from "sonner"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { cn } from "@/lib/utils"
 import { ConnectionBar } from "./connection-bar"
 import { SqlEditor } from "./sql-editor"
 import { SchemaSidebar } from "./schema-sidebar"
@@ -15,6 +16,19 @@ import { McpDialog } from "./mcp-dialog"
 import { LearnDialog } from "./learn-dialog"
 import type { AnalyzeResponse, BenchmarkResult, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
 import { SAMPLE_QUERIES } from "@/lib/sample-queries"
+
+function fmtMs(n: number | undefined) {
+  if (n === undefined || Number.isNaN(n)) return "—"
+  if (n >= 1000) return `${(n / 1000).toFixed(2)}s`
+  return `${n.toFixed(2)}ms`
+}
+
+function fmtRows(n: number | undefined) {
+  if (n === undefined) return "—"
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
 
 export function QueryAnalyzer() {
   const [sql, setSql] = useState(SAMPLE_QUERIES[0].sql)
@@ -192,17 +206,19 @@ export function QueryAnalyzer() {
         (result.explain.Plan["Actual Total Time"] ?? 0) * (result.explain.Plan["Actual Loops"] ?? 1))
     : 0
 
+  const hasResults = !!result || aiRunning || !!ai
+
   return (
-    <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col">
+    <div className="flex h-screen flex-col overflow-hidden bg-background">
       {/* Header */}
-      <header className="flex items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-4 py-3 sm:px-6">
         <div className="flex items-center gap-2.5">
-          <div className="flex size-8 items-center justify-center rounded-md bg-primary/15 text-primary">
+          <div className="flex size-8 items-center justify-center rounded-md bg-primary text-primary-foreground">
             <ServerCog className="size-5" />
           </div>
           <div>
-            <h1 className="font-mono text-sm font-semibold leading-none text-foreground">pgxray</h1>
-            <p className="mt-0.5 text-xs text-muted-foreground">Postgres Query Analyzer</p>
+            <h1 className="font-mono text-sm font-semibold leading-none tracking-tight text-foreground">pgxray</h1>
+            <p className="mt-1 text-xs text-muted-foreground">Postgres Query Analyzer</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -211,115 +227,157 @@ export function QueryAnalyzer() {
         </div>
       </header>
 
-      <div className="flex flex-1 flex-col lg:flex-row">
+      <div className="flex min-h-0 flex-1">
         {/* Schema sidebar */}
-        <aside className="hidden w-64 shrink-0 border-r border-border lg:block">
+        <aside className="hidden w-64 shrink-0 border-r border-border bg-sidebar lg:block">
           <SchemaSidebar tables={tables} loading={schemaLoading} onRefresh={loadSchema} onInsert={insertTable} />
         </aside>
 
         {/* Main */}
-        <main className="min-w-0 flex-1 space-y-4 p-4 sm:p-6">
-          <ConnectionBar
-            source={source}
-            connectionString={connectionString}
-            connected={connected}
-            testing={testing}
-            onSourceChange={handleSourceChange}
-            onConnectionStringChange={setConnectionString}
-            onTest={handleTest}
-          />
+        <main className="flex min-w-0 flex-1 flex-col overflow-y-auto">
+          <div className="flex flex-col gap-4 p-4 sm:p-6">
+            <ConnectionBar
+              source={source}
+              connectionString={connectionString}
+              connected={connected}
+              testing={testing}
+              onSourceChange={handleSourceChange}
+              onConnectionStringChange={setConnectionString}
+              onTest={handleTest}
+            />
 
-          <div className="grid gap-4 xl:grid-cols-2">
-            <div className="space-y-3">
-              <SqlEditor
-                sql={sql}
-                onChange={setSql}
-                onAnalyze={handleAnalyze}
-                analyzing={analyzing}
-                aiRunning={aiRunning}
-              />
-              <button
-                type="button"
-                onClick={handleAi}
-                disabled={aiRunning || !sql.trim()}
-                className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary/10 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-primary/15 disabled:opacity-50"
-              >
-                <Sparkles className="size-4" />
-                Generate AI analysis &amp; rewrite
-              </button>
-            </div>
+            {/* Editor */}
+            <SqlEditor
+              sql={sql}
+              onChange={setSql}
+              onAnalyze={handleAnalyze}
+              onAi={handleAi}
+              analyzing={analyzing}
+              aiRunning={aiRunning}
+            />
 
             {/* Results */}
-            <div className="rounded-lg border border-border bg-card">
-              {!result && !aiRunning && !ai ? (
-                <div className="flex h-full min-h-[360px] flex-col items-center justify-center p-8 text-center">
-                  <Terminal className="size-8 text-muted-foreground" />
-                  <p className="mt-3 max-w-xs text-pretty text-sm text-muted-foreground">
-                    Run an analysis to see the execution plan, heuristic findings, index suggestions, and AI
-                    recommendations.
-                  </p>
+            {!hasResults ? (
+              <div className="flex min-h-[280px] flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/40 p-8 text-center">
+                <div className="flex size-12 items-center justify-center rounded-lg border border-border bg-muted/40 text-muted-foreground">
+                  <Terminal className="size-6" />
                 </div>
-              ) : (
-                <Tabs value={tab} onValueChange={setTab} className="flex h-full flex-col">
-                  <TabsList className="m-3 grid w-auto grid-cols-4">
-                    <TabsTrigger value="plan" className="gap-1.5 text-xs">
-                      <ListTree className="size-3.5" />
-                      Plan
-                    </TabsTrigger>
-                    <TabsTrigger value="analysis" className="gap-1.5 text-xs">
-                      <GitBranch className="size-3.5" />
-                      Analysis
-                    </TabsTrigger>
-                    <TabsTrigger value="ai" className="gap-1.5 text-xs">
-                      <Sparkles className="size-3.5" />
-                      AI
-                    </TabsTrigger>
-                    <TabsTrigger value="bench" className="gap-1.5 text-xs">
-                      <Gauge className="size-3.5" />
-                      Bench
-                    </TabsTrigger>
-                  </TabsList>
-
-                  <div className="flex-1 overflow-auto px-4 pb-4">
-                    <TabsContent value="plan" className="mt-0">
-                      {result ? (
-                        <div>
-                          <PlanLegend />
-                          <div className="rounded-lg border border-border bg-background/40 p-2">
-                            <PlanNode node={result.explain.Plan} totalTime={totalTime} />
-                          </div>
-                        </div>
-                      ) : (
-                        <EmptyHint text="Run an analysis to view the execution plan tree." />
-                      )}
-                    </TabsContent>
-
-                    <TabsContent value="analysis" className="mt-0">
-                      {result ? (
-                        <AnalysisPanel analysis={result.analysis} />
-                      ) : (
-                        <EmptyHint text="Run an analysis to see findings and index suggestions." />
-                      )}
-                    </TabsContent>
-
-                    <TabsContent value="ai" className="mt-0">
-                      <AiPanel ai={ai} loading={aiRunning} onGenerate={handleAi} onUseRewrite={setSql} />
-                    </TabsContent>
-
-                    <TabsContent value="bench" className="mt-0">
-                      <BenchmarkPanel
-                        results={benchResults}
-                        loading={benchLoading}
-                        canRun={!!sql.trim()}
-                        onRun={handleBenchmark}
-                      />
-                    </TabsContent>
+                <p className="mt-4 text-sm font-medium text-foreground">No analysis yet</p>
+                <p className="mt-1 max-w-sm text-pretty text-sm text-muted-foreground">
+                  Write a query above and hit <span className="font-medium text-foreground">Analyze</span> to see the
+                  execution plan, heuristic findings, index suggestions, and AI recommendations.
+                </p>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-4">
+                {/* Metrics strip */}
+                {result && (
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <Stat
+                      label="Execution"
+                      value={fmtMs(totalTime || undefined)}
+                      accent
+                      icon={<Gauge className="size-3.5" />}
+                    />
+                    <Stat label="Planning" value={fmtMs(result.explain["Planning Time"])} />
+                    <Stat label="Rows returned" value={fmtRows(result.explain.Plan["Actual Rows"])} />
+                    <Stat
+                      label="Total cost"
+                      value={result.explain.Plan["Total Cost"]?.toFixed(0) ?? "—"}
+                      icon={<ArrowDownWideNarrow className="size-3.5" />}
+                    />
                   </div>
-                </Tabs>
-              )}
-            </div>
+                )}
+
+                {/* Tabs */}
+                <div className="rounded-lg border border-border bg-card">
+                  <Tabs value={tab} onValueChange={setTab} className="flex flex-col">
+                    <div className="border-b border-border p-2">
+                      <TabsList className="grid w-full grid-cols-4 sm:w-auto sm:inline-grid">
+                        <TabsTrigger value="plan" className="gap-1.5 text-xs">
+                          <ListTree className="size-3.5" />
+                          Plan
+                        </TabsTrigger>
+                        <TabsTrigger value="analysis" className="gap-1.5 text-xs">
+                          <GitBranch className="size-3.5" />
+                          Analysis
+                        </TabsTrigger>
+                        <TabsTrigger value="ai" className="gap-1.5 text-xs">
+                          <Sparkles className="size-3.5" />
+                          AI
+                        </TabsTrigger>
+                        <TabsTrigger value="bench" className="gap-1.5 text-xs">
+                          <Gauge className="size-3.5" />
+                          Bench
+                        </TabsTrigger>
+                      </TabsList>
+                    </div>
+
+                    <div className="p-4">
+                      <TabsContent value="plan" className="mt-0">
+                        {result ? (
+                          <div>
+                            <PlanLegend />
+                            <div className="overflow-x-auto rounded-lg border border-border bg-muted/20 p-2">
+                              <PlanNode node={result.explain.Plan} totalTime={totalTime} />
+                            </div>
+                          </div>
+                        ) : (
+                          <EmptyHint text="Run an analysis to view the execution plan tree." />
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="analysis" className="mt-0">
+                        {result ? (
+                          <AnalysisPanel analysis={result.analysis} />
+                        ) : (
+                          <EmptyHint text="Run an analysis to see findings and index suggestions." />
+                        )}
+                      </TabsContent>
+
+                      <TabsContent value="ai" className="mt-0">
+                        <AiPanel ai={ai} loading={aiRunning} onGenerate={handleAi} onUseRewrite={setSql} />
+                      </TabsContent>
+
+                      <TabsContent value="bench" className="mt-0">
+                        <BenchmarkPanel
+                          results={benchResults}
+                          loading={benchLoading}
+                          canRun={!!sql.trim()}
+                          onRun={handleBenchmark}
+                        />
+                      </TabsContent>
+                    </div>
+                  </Tabs>
+                </div>
+              </div>
+            )}
           </div>
         </main>
+      </div>
+    </div>
+  )
+}
+
+function Stat({
+  label,
+  value,
+  accent,
+  icon,
+}: {
+  label: string
+  value: string
+  accent?: boolean
+  icon?: React.ReactNode
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card px-4 py-3">
+      <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+        {icon}
+        {label}
+      </div>
+      <div className={cn("mt-1.5 font-mono text-xl font-semibold tabular-nums", accent && "text-primary")}>
+        {value}
       </div>
     </div>
   )

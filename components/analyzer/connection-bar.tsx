@@ -1,10 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { Database, Plug, Check, Loader2, ChevronDown } from "lucide-react"
+import { Database, Plug, Check, Loader2, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import type { ConnectionSource } from "@/lib/types"
 
@@ -30,20 +29,22 @@ export function ConnectionBar({
   const [expanded, setExpanded] = useState(false)
 
   return (
-    <div className="rounded-lg border border-border bg-card">
-      <div className="flex flex-wrap items-center gap-2 p-3">
-        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Database</span>
-        <div className="flex rounded-md border border-border p-0.5">
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-3">
+        {/* Segmented source toggle */}
+        <div className="flex rounded-lg border border-border bg-card p-0.5">
           <button
             type="button"
             onClick={() => onSourceChange("demo")}
             className={cn(
-              "flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors",
-              source === "demo" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              "flex items-center gap-1.5 rounded-[calc(var(--radius)-6px)] px-3 py-1.5 text-xs font-medium transition-colors",
+              source === "demo"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             <Database className="size-3.5" />
-            Demo
+            Demo database
           </button>
           <button
             type="button"
@@ -52,8 +53,10 @@ export function ConnectionBar({
               setExpanded(true)
             }}
             className={cn(
-              "flex items-center gap-1.5 rounded px-3 py-1.5 text-sm font-medium transition-colors",
-              source === "custom" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
+              "flex items-center gap-1.5 rounded-[calc(var(--radius)-6px)] px-3 py-1.5 text-xs font-medium transition-colors",
+              source === "custom"
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             <Plug className="size-3.5" />
@@ -62,51 +65,47 @@ export function ConnectionBar({
         </div>
 
         {source === "demo" ? (
-          <Badge variant="secondary" className="gap-1.5">
+          <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
             <span className="size-1.5 rounded-full bg-success" />
             Neon demo · e-commerce dataset
-          </Badge>
+          </span>
+        ) : connected ? (
+          <span className="flex items-center gap-1.5 text-xs font-medium text-success">
+            <Check className="size-3.5" />
+            Connected
+          </span>
         ) : (
-          <div className="flex flex-1 items-center gap-2">
-            {!expanded && (
-              <button
-                type="button"
-                onClick={() => setExpanded(true)}
-                className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-              >
-                {connected ? "Connected" : "Add connection string"}
-                <ChevronDown className="size-3.5" />
-              </button>
-            )}
-            {connected && (
-              <Badge variant="secondary" className="gap-1.5">
-                <Check className="size-3 text-success" />
-                Connected
-              </Badge>
-            )}
-          </div>
+          <span className="text-xs text-muted-foreground">Add a connection string to browse your schema</span>
         )}
       </div>
 
       {source === "custom" && expanded && (
-        <div className="flex flex-col gap-2 border-t border-border p-3 sm:flex-row sm:items-center">
+        <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 sm:flex-row sm:items-center">
           <Input
             value={connectionString}
             onChange={(e) => onConnectionStringChange(e.target.value)}
             placeholder="postgresql://user:password@host:5432/dbname?sslmode=require"
-            className="font-mono text-xs"
+            className="h-9 font-mono text-xs"
             spellCheck={false}
             autoComplete="off"
           />
-          <Button onClick={onTest} disabled={testing || !connectionString.trim()} className="shrink-0">
+          <Button
+            onClick={onTest}
+            disabled={testing || !connectionString.trim()}
+            className="h-9 shrink-0 text-xs"
+          >
             {testing ? <Loader2 className="size-4 animate-spin" /> : "Test connection"}
           </Button>
         </div>
       )}
+
       {source === "custom" && (
-        <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">
-          Credentials are used only to run read-only <code className="font-mono">EXPLAIN</code> queries and are never
-          stored. Queries run inside a <code className="font-mono">READ ONLY</code> transaction.
+        <p className="flex items-start gap-1.5 text-[11px] leading-relaxed text-muted-foreground">
+          <ShieldCheck className="mt-px size-3.5 shrink-0 text-success" />
+          <span>
+            Credentials run read-only <code className="font-mono text-foreground">EXPLAIN</code> queries inside a{" "}
+            <code className="font-mono text-foreground">READ ONLY</code> transaction and are never stored.
+          </span>
         </p>
       )}
     </div>
