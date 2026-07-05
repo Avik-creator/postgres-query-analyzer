@@ -19,6 +19,7 @@ import { ConnectionBar } from "./connection-bar"
 import { SqlEditor } from "./sql-editor"
 import { SchemaSidebar } from "./schema-sidebar"
 import { PlanNode, PlanLegend } from "./plan-node"
+import { TimeBreakdown } from "./time-breakdown"
 import { AnalysisPanel } from "./analysis-panel"
 import { AiPanel } from "./ai-panel"
 import { McpDialog } from "./mcp-dialog"
@@ -26,6 +27,8 @@ import { LearnDialog } from "./learn-dialog"
 import { Logo } from "./logo"
 import { InfoHint } from "./info-hint"
 import { METRIC_GLOSSARY } from "@/lib/glossary"
+import { highlightTokensForNode, nodeBuffers, fmtPages, hitRatio } from "@/lib/plan-utils"
+import type { PlanNode as PlanNodeType } from "@/lib/analyze"
 import type { AnalyzeResponse, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
 import { SAMPLE_QUERIES } from "@/lib/sample-queries"
 
@@ -64,8 +67,24 @@ export function QueryAnalyzer() {
   const [aiRunning, setAiRunning] = useState(false)
   const [ai, setAi] = useState<AiSuggestion | null>(null)
 
+  // plan node selection -> SQL highlight
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [highlightTokens, setHighlightTokens] = useState<string[]>([])
+
   const [tab, setTab] = useState("plan")
   const resultsRef = useRef<HTMLDivElement>(null)
+
+  const handleSelectNode = useCallback((node: PlanNodeType, path: string) => {
+    setSelectedPath((prev) => {
+      // toggle off if the same node is clicked again
+      if (prev === path) {
+        setHighlightTokens([])
+        return null
+      }
+      setHighlightTokens(highlightTokensForNode(node))
+      return path
+    })
+  }, [])
 
   const scrollToResults = useCallback(() => {
     requestAnimationFrame(() => {
@@ -129,6 +148,8 @@ export function QueryAnalyzer() {
     setResult(null)
     setAnalysisError(null)
     setAi(null)
+    setSelectedPath(null)
+    setHighlightTokens([])
     if (next === "demo") {
       setConnected(false)
       setSchemaLoading(true)
@@ -154,6 +175,8 @@ export function QueryAnalyzer() {
     setAnalyzing(true)
     setAnalysisError(null)
     setAi(null)
+    setSelectedPath(null)
+    setHighlightTokens([])
     scrollToResults()
     try {
       const res = await fetch("/api/analyze", {
@@ -254,6 +277,7 @@ export function QueryAnalyzer() {
               onAi={handleAi}
               analyzing={analyzing}
               aiRunning={aiRunning}
+              highlight={highlightTokens}
             />
 
             {/* Results */}
@@ -353,9 +377,21 @@ export function QueryAnalyzer() {
                       <TabsContent value="plan" className="mt-0">
                         {result ? (
                           <div>
+                            <TimeBreakdown
+                              root={result.explain.Plan}
+                              totalTime={totalTime}
+                              selectedPath={selectedPath ?? undefined}
+                              onSelect={handleSelectNode}
+                            />
+                            <BufferSummary root={result.explain.Plan} />
                             <PlanLegend />
                             <div className="overflow-x-auto rounded-lg border border-border bg-muted/20 p-2">
-                              <PlanNode node={result.explain.Plan} totalTime={totalTime} />
+                              <PlanNode
+                                node={result.explain.Plan}
+                                totalTime={totalTime}
+                                selectedPath={selectedPath ?? undefined}
+                                onSelect={handleSelectNode}
+                              />
                             </div>
                           </div>
                         ) : (
@@ -416,4 +452,40 @@ function Stat({
 
 function EmptyHint({ text }: { text: string }) {
   return <p className="py-8 text-center text-sm text-muted-foreground text-pretty">{text}</p>
+}
+
+/** Whole-query I/O summary from the root node's cumulative buffer counters. */
+function BufferSummary({ root }: { root: PlanNodeType }) {
+  const b = nodeBuffers(root)
+  if (!b.hasAny) return null
+  const ratio = hitRatio(b)
+  const tempTotal = b.tempRead + b.tempWritten
+  return (
+    <div className="mb-3 flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-border bg-card/40 px-3 py-2.5 font-mono text-xs">
+      <span className="flex items-center gap-1.5 font-sans text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        I/O
+        <InfoHint>{METRIC_GLOSSARY.buffers.short}</InfoHint>
+      </span>
+      {b.sharedHit > 0 && (
+        <span className="text-muted-foreground">
+          cache hit <span className="text-success">{fmtPages(b.sharedHit)}</span>
+        </span>
+      )}
+      <span className="text-muted-foreground">
+        disk read{" "}
+        <span className={b.sharedRead > 0 ? "text-warning" : "text-foreground"}>{fmtPages(b.sharedRead)}</span>
+      </span>
+      {ratio !== undefined && (
+        <span className="text-muted-foreground">
+          cached{" "}
+          <span className={ratio >= 0.9 ? "text-success" : "text-warning"}>{(ratio * 100).toFixed(0)}%</span>
+        </span>
+      )}
+      {tempTotal > 0 && (
+        <span className="text-muted-foreground">
+          temp files <span className="text-destructive">{fmtPages(tempTotal)}</span>
+        </span>
+      )}
+    </div>
+  )
 }
