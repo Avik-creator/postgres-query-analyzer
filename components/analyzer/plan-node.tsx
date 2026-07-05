@@ -4,6 +4,8 @@ import { useState } from "react"
 import { ChevronRight, AlertTriangle } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
+import { InfoHint, TermHint } from "./info-hint"
+import { lookupNode, METRIC_GLOSSARY } from "@/lib/glossary"
 import type { PlanNode as PlanNodeType } from "@/lib/analyze"
 
 function fmtRows(n: number | undefined) {
@@ -66,6 +68,7 @@ export function PlanNode({
   const nodeColor = NODE_COLORS[nodeType] ?? "text-foreground"
   const relation = node["Relation Name"]
   const indexName = node["Index Name"]
+  const nodeInfo = lookupNode(nodeType)
 
   return (
     <div className="text-sm">
@@ -88,7 +91,19 @@ export function PlanNode({
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className={cn("font-mono font-medium", nodeColor)}>{nodeType}</span>
+            {nodeInfo ? (
+              <TermHint
+                hint={
+                  <span>
+                    <strong>{nodeInfo.term}.</strong> {nodeInfo.short}
+                  </span>
+                }
+              >
+                <span className={cn("font-mono font-medium", nodeColor)}>{nodeType}</span>
+              </TermHint>
+            ) : (
+              <span className={cn("font-mono font-medium", nodeColor)}>{nodeType}</span>
+            )}
             {relation && (
               <span className="font-mono text-xs text-muted-foreground">
                 on {relation}
@@ -138,6 +153,32 @@ export function PlanNode({
       {open &&
         hasChildren &&
         children.map((child, i) => <PlanNode key={i} node={child} depth={depth + 1} totalTime={totalTime} />)}
+    </div>
+  )
+}
+
+export function PlanLegend() {
+  const items: Array<{ label: string; key: keyof typeof METRIC_GLOSSARY }> = [
+    { label: "rows est / act", key: "planRows" },
+    { label: "loops", key: "loops" },
+    { label: "self", key: "selfTime" },
+    { label: "cost", key: "cost" },
+  ]
+  return (
+    <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1.5 rounded-md border border-border bg-card/40 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+      <span className="flex items-center gap-1 font-sans text-foreground">
+        Legend
+        <InfoHint>
+          Each node shows these numbers. Hover a node&apos;s name to learn what that operation does, or open{" "}
+          <strong>Learn</strong> in the header for the full guide.
+        </InfoHint>
+      </span>
+      {items.map((it) => (
+        <span key={it.key} className="flex items-center gap-1">
+          {it.label}
+          <InfoHint>{METRIC_GLOSSARY[it.key].short}</InfoHint>
+        </span>
+      ))}
     </div>
   )
 }

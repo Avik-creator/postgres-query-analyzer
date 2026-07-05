@@ -6,6 +6,8 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { InfoHint } from "./info-hint"
+import { METRIC_GLOSSARY } from "@/lib/glossary"
 import type { AnalysisResult, Finding, Severity } from "@/lib/analyze"
 
 const SEVERITY_META: Record<
@@ -78,25 +80,32 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
         <Metric
           label="Planning"
           value={summary.planningTime !== undefined ? `${summary.planningTime.toFixed(2)}ms` : "—"}
+          hint={METRIC_GLOSSARY.planningTime.short}
         />
         <Metric
           label="Execution"
           value={summary.executionTime !== undefined ? `${summary.executionTime.toFixed(2)}ms` : "—"}
           highlight
+          hint={METRIC_GLOSSARY.executionTime.short}
         />
-        <Metric label="Total cost" value={summary.totalCost.toFixed(0)} />
+        <Metric label="Total cost" value={summary.totalCost.toFixed(0)} hint={METRIC_GLOSSARY.cost.short} />
         <Metric
           label="Row mis-estimate"
           value={summary.maxRowMisestimate ? `${Math.round(summary.maxRowMisestimate)}x` : "OK"}
           warn={!!summary.maxRowMisestimate && summary.maxRowMisestimate > 10}
+          hint={METRIC_GLOSSARY.rowMisestimate.short}
         />
       </div>
 
       {/* Concepts demonstrated */}
       {summary.concepts.length > 0 && (
         <div>
-          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          <h3 className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Concepts in this plan
+            <InfoHint>
+              The distinct operations Postgres used to run your query (scans, joins, sorts…). Open{" "}
+              <strong>Learn</strong> in the header for a full glossary of each one.
+            </InfoHint>
           </h3>
           <div className="flex flex-wrap gap-1.5">
             {summary.concepts.map((c) => (
@@ -139,6 +148,11 @@ export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
           <h3 className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
             <Lightbulb className="h-3.5 w-3.5" />
             Suggested indexes ({indexSuggestions.length})
+            <InfoHint>
+              An index is a lookup structure that lets Postgres find matching rows without scanning the whole
+              table. Copy the <span className="font-mono">CREATE INDEX</span> statement and run it on your
+              database, then re-analyze to see the effect.
+            </InfoHint>
           </h3>
           <div className="space-y-2">
             {indexSuggestions.map((s, i) => (
@@ -168,15 +182,20 @@ function Metric({
   value,
   highlight,
   warn,
+  hint,
 }: {
   label: string
   value: string
   highlight?: boolean
   warn?: boolean
+  hint?: string
 }) {
   return (
     <div className="rounded-lg border border-border bg-card/50 p-3">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-muted-foreground">
+        <span>{label}</span>
+        {hint && <InfoHint side="top">{hint}</InfoHint>}
+      </div>
       <div
         className={cn(
           "mt-1 font-mono text-lg font-semibold",

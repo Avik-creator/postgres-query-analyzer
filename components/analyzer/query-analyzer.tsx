@@ -7,11 +7,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { ConnectionBar } from "./connection-bar"
 import { SqlEditor } from "./sql-editor"
 import { SchemaSidebar } from "./schema-sidebar"
-import { PlanNode } from "./plan-node"
+import { PlanNode, PlanLegend } from "./plan-node"
 import { AnalysisPanel } from "./analysis-panel"
 import { AiPanel } from "./ai-panel"
 import { BenchmarkPanel } from "./benchmark-panel"
 import { McpDialog } from "./mcp-dialog"
+import { LearnDialog } from "./learn-dialog"
 import type { AnalyzeResponse, BenchmarkResult, ConnectionSource, TableInfo, AiSuggestion } from "@/lib/types"
 import { SAMPLE_QUERIES } from "@/lib/sample-queries"
 
@@ -204,7 +205,10 @@ export function QueryAnalyzer() {
             <p className="mt-0.5 text-xs text-muted-foreground">Postgres Query Analyzer</p>
           </div>
         </div>
-        <McpDialog />
+        <div className="flex items-center gap-2">
+          <LearnDialog />
+          <McpDialog />
+        </div>
       </header>
 
       <div className="flex flex-1 flex-col lg:flex-row">
@@ -279,8 +283,11 @@ export function QueryAnalyzer() {
                   <div className="flex-1 overflow-auto px-4 pb-4">
                     <TabsContent value="plan" className="mt-0">
                       {result ? (
-                        <div className="rounded-lg border border-border bg-background/40 p-2">
-                          <PlanNode node={result.explain.Plan} totalTime={totalTime} />
+                        <div>
+                          <PlanLegend />
+                          <div className="rounded-lg border border-border bg-background/40 p-2">
+                            <PlanNode node={result.explain.Plan} totalTime={totalTime} />
+                          </div>
                         </div>
                       ) : (
                         <EmptyHint text="Run an analysis to view the execution plan tree." />

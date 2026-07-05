@@ -1,11 +1,17 @@
 import { Analytics } from '@vercel/analytics/next'
 import type { Metadata, Viewport } from 'next'
-import { Geist, Geist_Mono } from 'next/font/google'
+import { Plus_Jakarta_Sans, Lora, IBM_Plex_Mono } from 'next/font/google'
 import { Toaster } from '@/components/ui/sonner'
+import { TooltipProvider } from '@/components/ui/tooltip'
 import './globals.css'
 
-const geistSans = Geist({ subsets: ['latin'], variable: '--font-geist-sans' })
-const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
+const jakarta = Plus_Jakarta_Sans({ subsets: ['latin'], variable: '--font-jakarta' })
+const lora = Lora({ subsets: ['latin'], variable: '--font-lora' })
+const ibmPlexMono = IBM_Plex_Mono({
+  subsets: ['latin'],
+  weight: ['400', '500', '600'],
+  variable: '--font-ibm-plex-mono',
+})
 
 export const metadata: Metadata = {
   title: 'pgxray — Postgres Query Analyzer',
@@ -33,7 +39,7 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   colorScheme: 'dark',
-  themeColor: '#1a1d24',
+  themeColor: '#000000',
 }
 
 export default function RootLayout({
@@ -42,9 +48,12 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className={`bg-background ${geistSans.variable} ${geistMono.variable}`}>
+    <html
+      lang="en"
+      className={`dark bg-background ${jakarta.variable} ${lora.variable} ${ibmPlexMono.variable}`}
+    >
       <body className="font-sans antialiased">
-        {children}
+        <TooltipProvider delay={150}>{children}</TooltipProvider>
         <Toaster position="top-center" />
         {process.env.NODE_ENV === 'production' && <Analytics />}
       </body>
