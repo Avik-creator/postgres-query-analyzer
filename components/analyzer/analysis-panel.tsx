@@ -1,0 +1,191 @@
+"use client"
+
+import { useState } from "react"
+import { Copy, Check, AlertTriangle, Info, AlertOctagon, Lightbulb, Database } from "lucide-react"
+import { toast } from "sonner"
+import { cn } from "@/lib/utils"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import type { AnalysisResult, Finding, Severity } from "@/lib/analyze"
+
+const SEVERITY_META: Record<
+  Severity,
+  { label: string; icon: typeof Info; className: string; dot: string }
+> = {
+  high: { label: "High", icon: AlertOctagon, className: "text-destructive", dot: "bg-destructive" },
+  medium: { label: "Medium", icon: AlertTriangle, className: "text-warning", dot: "bg-warning" },
+  low: { label: "Low", icon: Info, className: "text-muted-foreground", dot: "bg-muted-foreground" },
+  info: { label: "Info", icon: Info, className: "text-success", dot: "bg-success" },
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 gap-1.5 px-2 text-xs"
+      onClick={() => {
+        navigator.clipboard.writeText(text)
+        setCopied(true)
+        toast.success("Copied to clipboard")
+        setTimeout(() => setCopied(false), 1500)
+      }}
+    >
+      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      {copied ? "Copied" : "Copy"}
+    </Button>
+  )
+}
+
+function FindingCard({ finding }: { finding: Finding }) {
+  const meta = SEVERITY_META[finding.severity]
+  const Icon = meta.icon
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-4">
+      <div className="flex items-start gap-3">
+        <Icon className={cn("mt-0.5 h-4 w-4 shrink-0", meta.className)} />
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <h4 className="text-sm font-medium text-foreground text-pretty">{finding.title}</h4>
+            <Badge variant="outline" className={cn("text-[10px]", meta.className)}>
+              {meta.label}
+            </Badge>
+            {finding.concept && (
+              <Badge variant="secondary" className="text-[10px]">
+                {finding.concept}
+              </Badge>
+            )}
+          </div>
+          <p className="mt-1.5 text-sm leading-relaxed text-muted-foreground text-pretty">{finding.detail}</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function AnalysisPanel({ analysis }: { analysis: AnalysisResult }) {
+  const { summary, findings, indexSuggestions } = analysis
+  const counts = findings.reduce<Record<string, number>>((acc, f) => {
+    acc[f.severity] = (acc[f.severity] ?? 0) + 1
+    return acc
+  }, {})
+
+  return (
+    <div className="space-y-6">
+      {/* Summary metrics */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Metric
+          label="Planning"
+          value={summary.planningTime !== undefined ? `${summary.planningTime.toFixed(2)}ms` : "—"}
+        />
+        <Metric
+          label="Execution"
+          value={summary.executionTime !== undefined ? `${summary.executionTime.toFixed(2)}ms` : "—"}
+          highlight
+        />
+        <Metric label="Total cost" value={summary.totalCost.toFixed(0)} />
+        <Metric
+          label="Row mis-estimate"
+          value={summary.maxRowMisestimate ? `${Math.round(summary.maxRowMisestimate)}x` : "OK"}
+          warn={!!summary.maxRowMisestimate && summary.maxRowMisestimate > 10}
+        />
+      </div>
+
+      {/* Concepts demonstrated */}
+      {summary.concepts.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Concepts in this plan
+          </h3>
+          <div className="flex flex-wrap gap-1.5">
+            {summary.concepts.map((c) => (
+              <Badge key={c} variant="secondary" className="font-mono text-[11px]">
+                {c}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Findings */}
+      <div>
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Findings ({findings.length})
+          </h3>
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
+            {(["high", "medium", "low"] as const).map(
+              (s) =>
+                counts[s] > 0 && (
+                  <span key={s} className="flex items-center gap-1.5">
+                    <span className={cn("h-2 w-2 rounded-full", SEVERITY_META[s].dot)} />
+                    {counts[s]}
+                  </span>
+                ),
+            )}
+          </div>
+        </div>
+        <div className="space-y-2">
+          {findings.map((f) => (
+            <FindingCard key={f.id} finding={f} />
+          ))}
+        </div>
+      </div>
+
+      {/* Index suggestions */}
+      {indexSuggestions.length > 0 && (
+        <div>
+          <h3 className="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            <Lightbulb className="h-3.5 w-3.5" />
+            Suggested indexes ({indexSuggestions.length})
+          </h3>
+          <div className="space-y-2">
+            {indexSuggestions.map((s, i) => (
+              <div key={i} className="rounded-lg border border-border bg-card/50 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <Database className="h-3.5 w-3.5" />
+                    <span className="font-mono text-foreground">{s.relation}</span>
+                  </div>
+                  <CopyButton text={s.ddl} />
+                </div>
+                <pre className="mt-2 overflow-x-auto rounded bg-background/60 p-2 font-mono text-xs text-success">
+                  {s.ddl}
+                </pre>
+                <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{s.rationale}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Metric({
+  label,
+  value,
+  highlight,
+  warn,
+}: {
+  label: string
+  value: string
+  highlight?: boolean
+  warn?: boolean
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-card/50 p-3">
+      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
+      <div
+        className={cn(
+          "mt-1 font-mono text-lg font-semibold",
+          highlight && "text-primary",
+          warn && "text-warning",
+        )}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
